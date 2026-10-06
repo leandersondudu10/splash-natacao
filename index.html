@@ -684,6 +684,8 @@ h2 { color:var(--dark); margin-bottom:15px; text-align:center; font-size:22px; }
 .gota { position:fixed; width:9px; height:9px; margin:-4px 0 0 -4px; border-radius:50% 50% 50% 50% / 60% 60% 40% 40%; background:radial-gradient(circle at 30% 30%, #fff, #90e0ef 60%, #00b4d8); border:1px solid rgba(0,119,190,.4); pointer-events:none; z-index:3000; animation:gota .7s cubic-bezier(.2,.7,.4,1) forwards; }
 @keyframes gota { 0% { transform:translate(0,0) scale(1); opacity:1; } 45% { transform:translate(calc(var(--dx) * .6), var(--dy)) scale(1); opacity:1; } 100% { transform:translate(var(--dx), calc(var(--dy) * -.3 + 30px)) scale(.4); opacity:0; } }
 @media (prefers-reduced-motion: reduce) { .bolha, .onda, #logo-img, #logo-texto, .header > div:last-child, .modal-box, .admin-section, .parent-section { animation:none !important; } }
+/* marca d'água da logo (usa o mesmo logo.png; sem o arquivo, simplesmente não aparece) */
+body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:none; background:url("logo.png") center 45% / min(75vw, 460px) auto no-repeat; opacity:.12; mix-blend-mode:multiply; }
 </style>
 </head>
 <body>
