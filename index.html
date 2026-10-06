@@ -28,6 +28,9 @@ const auth = getAuth(app);
 
 const ADMINS = { 'bruna@splash.com': 'Tia Bruna', 'auri@splash.com': 'Tia Auri' };
 const RESERVADOS = ['bruna', 'auri'];
+// OPCIONAL: WhatsApp direto de cada professora (só números, com DDD). Ex: '85999998888'.
+// Vazio = ao tocar no botão, o pai escolhe no próprio WhatsApp o grupo (ou contato) para enviar.
+const WHATS_PROFS = { 'Tia Bruna': '', 'Tia Auri': '' };
 let currentUserData = null, unsubs = [], registrando = false, turmaAtual = null, ultimaVisita = 0, turmasAdmin = [], msgAviso = '';
 
 const $ = id => document.getElementById(id);
@@ -65,6 +68,8 @@ onAuthStateChanged(auth, async (user) => {
         $('parent-panel').style.display = 'none';
         window.mudarAbaAdmin('admin-turmas');
         ouvirTurmas('lista-admin-turmas', renderAdmin);
+        vistoAdmin = lerVistoAdmin();
+        ouvirAgendamentosAdmin();
     } else {
         iniciarPai(user);
     }
@@ -166,7 +171,13 @@ function trocarAba(painel, secao, abaId) {
     $(abaId).style.display = 'block';
     document.querySelectorAll(`#${painel} .nav-tab`).forEach(el => el.classList.toggle('active', el.dataset.aba === abaId));
 }
-window.mudarAbaAdmin = id => trocarAba('admin-panel', 'admin-section', id);
+let abaAdmin = 'admin-turmas';
+window.mudarAbaAdmin = id => {
+    const saindo = abaAdmin === 'admin-atividade' && id !== 'admin-atividade';
+    abaAdmin = id;
+    trocarAba('admin-panel', 'admin-section', id);
+    if (saindo) marcarVistoAdmin(); // ao sair da aba, o que estava novo passa a ser "visto"
+};
 window.mudarAbaPai = id => trocarAba('parent-panel', 'parent-section', id);
 
 // ===== TURMAS (listener compartilhado) =====
@@ -297,6 +308,70 @@ window.selecionarDia = iso => { diaSel = iso; renderCalendario(); };
 window.mudarMes = delta => { calRef = new Date(calRef.getFullYear(), calRef.getMonth() + delta, 1); renderCalendario(); };
 window.novaTurmaNoDia = iso => { window.novaTurma(); $('turma-data').value = iso; };
 
+// ===== AVISO PELO WHATSAPP (pai avisa no grupo ou na professora) =====
+function linkWhats(prof, crianca, dh) {
+    const n = String(WHATS_PROFS[prof] || '').replace(/\D/g, '');
+    const msg = `Olá! Aqui é ${currentUserData?.nome_responsavel || 'um responsável'}. Agendei ${crianca} para a aula de ${dh} (${prof}). 🏊‍♂️`;
+    const base = n ? `https://wa.me/${n.length <= 11 ? '55' + n : n}` : 'https://wa.me/';
+    const rotulo = n ? `Avisar ${esc(prof)} no WhatsApp` : 'Avisar no grupo do WhatsApp';
+    return `<a class="btn-wpp" href="${base}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">💬 ${rotulo}</a>`;
+}
+
+// ===== ATIVIDADE (professora) =====
+let agsAdmin = [], vistoAdmin = 0;
+const chaveAdmin = () => `splash_admin_visto_${auth.currentUser?.uid}`;
+function lerVistoAdmin() { try { return Number(localStorage.getItem(chaveAdmin())) || Date.now(); } catch (e) { return Date.now(); } }
+function marcarVistoAdmin() { vistoAdmin = Date.now(); try { localStorage.setItem(chaveAdmin(), vistoAdmin); } catch (e) {} renderAtividade(); }
+
+function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.style.display = 'block';
+    clearTimeout(t._h);
+    t._h = setTimeout(() => { t.style.display = 'none'; }, 7000);
+}
+
+function infoAg(a) {
+    const t = turmasAdmin.find(x => x.id === a.id_turma) || {};
+    return { data: a.turma_data || t.data, horario: a.turma_horario || t.horario, professora: a.professora || t.professora };
+}
+
+function ouvirAgendamentosAdmin() {
+    let primeira = true;
+    unsubs.push(onSnapshot(collection(db, "agendamentos"), (snap) => {
+        agsAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => (y.criado_em || 0) - (x.criado_em || 0));
+        if (!primeira) snap.docChanges().forEach(c => {
+            if (c.type !== 'added') return;
+            const a = c.doc.data(), i = infoAg(a);
+            if (i.professora === ADMINS[auth.currentUser?.email]) toast(`🔔 ${a.nome_responsavel} agendou ${a.nome_crianca} — ${fmtData(i.data)} às ${i.horario}`);
+        });
+        primeira = false;
+        renderAtividade();
+    }, (err) => {
+        console.error(err);
+        const el = $('lista-atividade');
+        if (el) el.innerHTML = `<p class="card erro">Erro ao carregar atividade (${esc(err.code)}).</p>`;
+    }));
+}
+
+function renderAtividade() {
+    const el = $('lista-atividade');
+    if (!el) return;
+    const minha = ADMINS[auth.currentUser?.email];
+    const itens = agsAdmin.map(a => ({ a, ...infoAg(a) }));
+    const ehNovo = i => i.a.criado_em > vistoAdmin && i.professora === minha;
+    const n = itens.filter(ehNovo).length;
+    const aba = document.querySelector('#admin-panel .nav-tab[data-aba="admin-atividade"]');
+    if (aba) aba.textContent = n ? `🔔 Atividade 🆕 ${n}` : '🔔 Atividade';
+    el.innerHTML = itens.length ? itens.slice(0, 40).map(i => `
+        <div class="class-card" style="${ehNovo(i) ? 'border-left:6px solid var(--orange); background:#fff8ec;' : ''}">
+            <p>${ehNovo(i) ? '<span class="tag-nova">🆕 NOVO</span><br>' : ''}🏊‍♂️ <b>${esc(i.a.nome_crianca)}</b> foi agendado(a)</p>
+            <p><small>📅 ${fmtData(i.data)} às ${esc(i.horario)} · ${esc(i.professora)}</small></p>
+            <p><small>Resp: ${esc(i.a.nome_responsavel || 'N/A')} · 📞 ${esc(i.a.telefone_responsavel || 'N/A')}</small></p>
+            <p><small>🕒 ${i.a.criado_em ? new Date(i.a.criado_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'horário não registrado'}</small></p>
+        </div>`).join('') : '<p class="card" style="text-align:center;">Nenhum agendamento ainda.</p>';
+}
+
 // ===== EDITAR TURMA =====
 function resetarForm() {
     editandoId = null;
@@ -363,18 +438,18 @@ function renderPais(el, turmas) {
             ${t.criado_em > ultimaVisita ? '<span class="tag-nova">🆕 NOVA</span>' : ''}<p><b>Professora:</b> ${esc(t.professora)}</p>
             <p><b>Nível:</b> ${esc(t.nivel)}</p>
             <p style="color:#023e8a; font-weight:bold; margin-top:5px;">${t.capacidade_maxima - t.vagas_ocupadas} vaga(s) restante(s)</p>
-            <button class="btn-action" onclick="window.abrirModalAgendamento('${t.id}', '${esc(t.data)}', '${esc(t.horario)}')">Agendar Aula</button>
+            <button class="btn-action" onclick="window.abrirModalAgendamento('${t.id}', '${esc(t.data)}', '${esc(t.horario)}', '${esc(t.professora)}')">Agendar Aula</button>
         </div>`).join('');
 }
 
-window.abrirModalAgendamento = function(turmaId, data, horario) {
+window.abrirModalAgendamento = function(turmaId, data, horario, professora) {
     const criancas = currentUserData?.criancas || [];
     if (!criancas.length) {
         alert("Você precisa cadastrar um peixinho no seu Perfil primeiro!");
         window.mudarAbaPai('pai-perfil');
         return;
     }
-    turmaAtual = { id: turmaId };
+    turmaAtual = { id: turmaId, data, horario, professora };
     $('select-filho').innerHTML = criancas.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
     $('modal-texto').innerHTML = `Agendando aula para o dia <b>${fmtData(data)}</b> às <b>${esc(horario)}</b>.`;
     $('modal-agendamento').style.display = 'flex';
@@ -396,13 +471,19 @@ window.confirmarAgendamento = async function() {
             id_responsavel: currentUserData.uid,
             nome_responsavel: currentUserData.nome_responsavel,
             nome_crianca: crianca,
-            telefone_responsavel: currentUserData.telefone || ''
+            telefone_responsavel: currentUserData.telefone || '',
+            criado_em: Date.now(), turma_data: turmaAtual.data, turma_horario: turmaAtual.horario, professora: turmaAtual.professora
         });
         lote.update(doc(db, "turmas", turmaAtual.id), { vagas_ocupadas: increment(1) });
         await lote.commit(); // se a turma lotou, as regras recusam e nada é salvo
         window.fecharModal();
-        alert(`🎉 Vaga garantida para ${crianca}!`);
         window.mudarAbaPai('pai-agendamentos');
+        const lk = linkWhats(turmaAtual.professora, crianca, `${fmtData(turmaAtual.data)} às ${turmaAtual.horario}`);
+        if (lk) {
+            $('modal-whats-txt').textContent = `🎉 Vaga garantida para ${crianca}!`;
+            $('whats-link').innerHTML = lk;
+            $('modal-whats').style.display = 'flex';
+        } else alert(`🎉 Vaga garantida para ${crianca}!`);
     } catch (err) {
         console.error(err);
         alert(err.code === 'permission-denied' ? "Essa turma acabou de lotar. Escolha outra aula." : "Erro ao agendar a aula (" + (err.code || err.message) + "). Tente novamente.");
@@ -416,16 +497,16 @@ function carregarMeusAgendamentos() {
         if (snap.empty) { lista.innerHTML = '<p style="text-align:center; padding:20px;">Você ainda não agendou nenhuma aula.</p>'; return; }
         const itens = await Promise.all(snap.docs.map(async (d) => {
             const a = d.data();
-            let info = "Aula (turma removida)", ord = "";
+            let info = "Aula (turma removida)", ord = "", prof = "", dh = "";
             try {
                 const ts = await getDoc(doc(db, "turmas", a.id_turma));
                 if (ts.exists()) {
                     const t = ts.data();
                     info = `${fmtData(t.data)} às ${t.horario} - ${t.professora}`;
-                    ord = `${t.data}${t.horario}`;
+                    ord = `${t.data}${t.horario}`; prof = t.professora; dh = `${fmtData(t.data)} às ${t.horario}`;
                 }
             } catch (e) {}
-            return { id: d.id, a, info, ord };
+            return { id: d.id, a, info, ord, prof, dh };
         }));
         itens.sort((x, y) => x.ord.localeCompare(y.ord));
         lista.innerHTML = itens.map(i => `
@@ -433,6 +514,7 @@ function carregarMeusAgendamentos() {
                 <p><b>Peixinho:</b> ${esc(i.a.nome_crianca)}</p>
                 <p><b>Data:</b> ${esc(i.info)}</p>
                 <p style="color:#0077be; margin-top:8px;"><i>✅ Vaga Confirmada</i></p>
+                ${linkWhats(i.prof, i.a.nome_crianca, i.dh)}
                 <button onclick="window.cancelarAgendamento('${i.id}', '${i.a.id_turma}')" style="margin-top:10px; background:#ef233c; color:white; border:none; padding:6px 12px; border-radius:8px; cursor:pointer;">Cancelar vaga</button>
             </div>`).join('');
     }, (err) => {
@@ -537,6 +619,8 @@ h2 { color:var(--dark); margin-bottom:15px; text-align:center; font-size:22px; }
 .cal-dots { display:flex; gap:3px; justify-content:center; flex-wrap:wrap; margin-top:4px; }
 .cal-dots i { width:8px; height:8px; border-radius:50%; display:inline-block; border:1px solid #fff; }
 .mini-btn { background:var(--primary); color:#fff; border:none; border-radius:8px; padding:7px 12px; font-size:13px; font-weight:bold; cursor:pointer; }
+#toast { display:none; position:fixed; top:12px; left:50%; transform:translateX(-50%); background:var(--dark); color:#fff; padding:12px 18px; border-radius:12px; z-index:2000; box-shadow:0 4px 14px rgba(0,0,0,.3); max-width:90%; text-align:center; font-weight:bold; font-size:14px; }
+.btn-wpp { display:block; background:#25d366; color:#fff; text-align:center; padding:12px; border-radius:10px; text-decoration:none; font-weight:bold; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -586,6 +670,7 @@ h2 { color:var(--dark); margin-bottom:15px; text-align:center; font-size:22px; }
                 <div class="nav-tab active" data-aba="admin-turmas" onclick="window.mudarAbaAdmin('admin-turmas')">📅 Turmas Liberadas</div>
                 <div class="nav-tab" data-aba="admin-nova" onclick="window.novaTurma()">➕ Liberar Turma</div>
                 <div class="nav-tab" data-aba="admin-calendario" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</div>
+                <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')">🔔 Atividade</div>
             </div>
             <div id="admin-nova" class="admin-section card" style="display:none;">
                 <h2 id="titulo-form-turma">Liberar Nova Turma</h2>
@@ -614,6 +699,9 @@ h2 { color:var(--dark); margin-bottom:15px; text-align:center; font-size:22px; }
                 <div id="cal-corpo"></div>
                 <p style="font-size:12px; color:#555; margin-top:10px;"><span style="color:#0077be">●</span> Tia Bruna &nbsp; <span style="color:#ff9f1c">●</span> Tia Auri</p>
                 <div id="cal-dia-detalhe"></div>
+            </div>
+            <div id="admin-atividade" class="admin-section" style="display:none;">
+                <div id="lista-atividade">Carregando...</div>
             </div>
             <div id="admin-turmas" class="admin-section">
                 <div id="lista-admin-turmas">Carregando turmas...</div>
@@ -662,6 +750,17 @@ h2 { color:var(--dark); margin-bottom:15px; text-align:center; font-size:22px; }
             <button type="button" onclick="window.fecharModal()" style="flex:1; padding:12px; border-radius:10px; border:1px solid #ccc; background:#fff; cursor:pointer; font-weight:bold;">Cancelar</button>
             <button type="button" onclick="window.confirmarAgendamento()" style="flex:1; padding:12px; border-radius:10px; border:none; background:var(--orange); color:#fff; cursor:pointer; font-weight:bold;">Confirmar!</button>
         </div>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="modal-whats" class="modal-overlay">
+    <div class="modal-box">
+        <h2 id="modal-whats-txt" style="color:var(--primary);"></h2>
+        <p style="margin:10px 0 18px; color:#555;">Quer avisar no WhatsApp? Você escolhe o grupo ou o contato ao tocar no botão.</p>
+        <div id="whats-link"></div>
+        <button class="btn-action" style="background:#888;" onclick="document.getElementById('modal-whats').style.display='none'">Fechar</button>
     </div>
 </div>
 
