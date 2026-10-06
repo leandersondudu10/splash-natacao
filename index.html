@@ -28,6 +28,8 @@ const auth = getAuth(app);
 
 const ADMINS = { 'bruna@splash.com': 'Tia Bruna', 'auri@splash.com': 'Tia Auri' };
 const RESERVADOS = ['bruna', 'auri'];
+// Dados da escola usados no aviso de privacidade. Preencha o contato (WhatsApp ou e-mail) para pedidos sobre dados.
+const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625' };
 // OPCIONAL: WhatsApp direto de cada professora (só números, com DDD). Ex: '85999998888'.
 // Vazio = ao tocar no botão, o pai escolhe no próprio WhatsApp o grupo (ou contato) para enviar.
 const WHATS_PROFS = { 'Tia Bruna': '', 'Tia Auri': '' };
@@ -37,8 +39,8 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtData = d => d ? d.split('-').reverse().join('/') : '';
 const hojeISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-let editandoId = null;
-const cancelarListeners = () => { unsubs.forEach(u => u()); unsubs = []; };
+let editandoId = null, unsubMens = null, respAdmin = [], faltasAdmin = [], mensAdmin = {}, mesAl = hojeISO().slice(0, 7), filtroAl = 'todos';
+const cancelarListeners = () => { unsubs.forEach(u => u()); unsubs = []; if (unsubMens) { unsubMens(); unsubMens = null; } };
 
 // Última visita do responsável (para marcar turmas novas)
 const chaveVisita = () => `splash_visto_${currentUserData.uid}`;
@@ -70,6 +72,7 @@ onAuthStateChanged(auth, async (user) => {
         ouvirTurmas('lista-admin-turmas', renderAdmin);
         vistoAdmin = lerVistoAdmin();
         ouvirAgendamentosAdmin();
+        ouvirAlunosAdmin();
     } else {
         iniciarPai(user);
     }
@@ -88,6 +91,7 @@ async function iniciarPai(user) {
     const d = currentUserData;
     d.uid = user.uid;
     ultimaVisita = lerVisita();
+    if (!d.aceite_privacidade) window.abrirPrivacidade('aceite');
     if (!d.criancas) d.criancas = d.nome_crianca ? [d.nome_crianca] : [];
     $('user-name-display').innerHTML = `🌊 Olá, <b>${esc(d.nome_responsavel)}</b>`;
     window.mudarAbaPai('pai-aulas');
@@ -116,14 +120,15 @@ window.addEventListener('DOMContentLoaded', () => {
         if (RESERVADOS.includes(usuario)) return alert("Esse nome de usuário é reservado. Escolha outro.");
         registrando = true;
         try {
+            if (!$('reg-aceite').checked) throw { code: 'sem-aceite' };
             const cred = await createUserWithEmailAndPassword(auth, `${usuario}@splash.com`, pass);
-            await setDoc(doc(db, "responsaveis", cred.user.uid), { nome_responsavel: nome, telefone, usuario, criancas: [crianca] });
+            await setDoc(doc(db, "responsaveis", cred.user.uid), { nome_responsavel: nome, telefone, usuario, criancas: [crianca], aceite_privacidade: true, aceite_em: Date.now() });
             registrando = false;
             await iniciarPai(cred.user);
             alert("Conta criada! Bem-vindo(a) à família Splash!");
         } catch (err) {
             registrando = false;
-            alert(err.code === 'auth/email-already-in-use' ? "Esse nome de usuário já existe. Escolha outro." : "Erro do Firebase: " + (err.code || err.message));
+            alert(err.code === 'sem-aceite' ? "Para criar a conta, aceite o aviso de privacidade." : err.code === 'auth/email-already-in-use' ? "Esse nome de usuário já existe. Escolha outro." : "Erro do Firebase: " + (err.code || err.message));
         }
     };
 
@@ -308,6 +313,31 @@ window.selecionarDia = iso => { diaSel = iso; renderCalendario(); };
 window.mudarMes = delta => { calRef = new Date(calRef.getFullYear(), calRef.getMonth() + delta, 1); renderCalendario(); };
 window.novaTurmaNoDia = iso => { window.novaTurma(); $('turma-data').value = iso; };
 
+// ===== AVISO DE PRIVACIDADE (LGPD) =====
+const textoPrivacidade = () => `
+    <h2 style="color:var(--primary); font-size:20px;">🔒 Aviso de Privacidade</h2>
+    <p><b>Quem cuida dos dados:</b> ${esc(ESCOLA.nome)}.</p>
+    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, as faltas e a situação da mensalidade (pago ou pendente).</p>
+    <p><b>Para quê:</b> agendar aulas e reposições, organizar as turmas e avisar sobre as aulas. Não usamos os dados para publicidade e não os vendemos.</p>
+    <p><b>Quem acessa:</b> as professoras e a administração da escola. Os dados ficam guardados na plataforma Google Firebase.</p>
+    <p><b>Crianças:</b> ao cadastrar uma criança, você declara ser o responsável legal por ela e consente com o uso do nome dela para as finalidades acima.</p>
+    <p><b>Por quanto tempo:</b> enquanto você usar o sistema ou até pedir a exclusão.</p>
+    <p><b>Seus direitos:</b> você pode pedir acesso, correção ou exclusão dos seus dados e dos da criança a qualquer momento, falando com a escola${ESCOLA.contato ? ' em ' + esc(ESCOLA.contato) : ''}.</p>`;
+window.abrirPrivacidade = function(modo = 'leitura') {
+    $('priv-texto').innerHTML = textoPrivacidade();
+    $('priv-botoes-leitura').style.display = modo === 'aceite' ? 'none' : 'block';
+    $('priv-botoes-aceite').style.display = modo === 'aceite' ? 'flex' : 'none';
+    $('modal-privacidade').style.display = 'flex';
+};
+window.fecharPrivacidade = () => { $('modal-privacidade').style.display = 'none'; };
+window.aceitarPrivacidade = async function() {
+    try {
+        await setDoc(doc(db, "responsaveis", currentUserData.uid), { aceite_privacidade: true, aceite_em: Date.now() }, { merge: true });
+        currentUserData.aceite_privacidade = true;
+        window.fecharPrivacidade();
+    } catch (e) { alert("Erro ao registrar o aceite. Tente novamente."); }
+};
+
 // ===== AVISO PELO WHATSAPP (pai avisa no grupo ou na professora) =====
 function linkWhats(prof, crianca, dh) {
     const n = String(WHATS_PROFS[prof] || '').replace(/\D/g, '');
@@ -347,6 +377,7 @@ function ouvirAgendamentosAdmin() {
         });
         primeira = false;
         renderAtividade();
+        renderAlunos();
     }, (err) => {
         console.error(err);
         const el = $('lista-atividade');
@@ -371,6 +402,91 @@ function renderAtividade() {
             <p><small>🕒 ${i.a.criado_em ? new Date(i.a.criado_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'horário não registrado'}</small></p>
         </div>`).join('') : '<p class="card" style="text-align:center;">Nenhum agendamento ainda.</p>';
 }
+
+// ===== ALUNOS: MENSALIDADE + FALTAS/REPOSIÇÃO (professora) =====
+const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+const idMens = (uid, crianca, mes) => `${uid}__${slug(crianca)}__${mes}`;
+const nomeMes = m => `${MESES[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;
+
+function ouvirAlunosAdmin() {
+    const erro = err => { console.error(err); const el = $('lista-alunos-admin'); if (el) el.innerHTML = `<p class="card erro">Erro ao carregar (${esc(err.code)}). Confira as regras do Firestore.</p>`; };
+    unsubs.push(onSnapshot(collection(db, "responsaveis"), snap => { respAdmin = snap.docs.map(d => ({ uid: d.id, ...d.data() })); renderAlunos(); }, erro));
+    unsubs.push(onSnapshot(collection(db, "faltas"), snap => { faltasAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderAlunos(); }, erro));
+    ouvirMensalidades();
+}
+function ouvirMensalidades() {
+    if (unsubMens) unsubMens();
+    unsubMens = onSnapshot(query(collection(db, "mensalidades"), where("mes", "==", mesAl)), snap => {
+        mensAdmin = {};
+        snap.docs.forEach(d => { mensAdmin[d.id] = d.data(); });
+        renderAlunos();
+    }, err => { console.error(err); const el = $('lista-alunos-admin'); if (el) el.innerHTML = `<p class="card erro">Erro ao carregar mensalidades (${esc(err.code)}). Confira as regras do Firestore.</p>`; });
+}
+
+function linkCobranca(p, c) {
+    const n = String(p.telefone || '').replace(/\D/g, '');
+    if (!n) return '';
+    const msg = `Olá, ${p.nome_responsavel}! Passando para lembrar da mensalidade de ${nomeMes(mesAl)} de ${c}. Qualquer dúvida, estamos à disposição. 🏊‍♂️`;
+    return `<a class="mini-btn" style="background:#25d366; text-decoration:none;" href="https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">💬 Cobrar</a>`;
+}
+
+function renderAlunos() {
+    const el = $('lista-alunos-admin');
+    if (!el) return;
+    $('al-mes').textContent = nomeMes(mesAl);
+    const dados = respAdmin.flatMap(p => (p.criancas || []).map(c => {
+        const fs = faltasAdmin.filter(f => f.id_responsavel === p.uid && f.nome_crianca === c).sort((x, y) => x.data.localeCompare(y.data));
+        const reps = agsAdmin.filter(a => a.id_responsavel === p.uid && a.nome_crianca === c).length;
+        return { p, c, pago: !!mensAdmin[idMens(p.uid, c, mesAl)]?.pago, fs, reps, saldo: Math.max(0, fs.length - reps) };
+    })).sort((x, y) => x.c.localeCompare(y.c));
+    const pagos = dados.filter(d => d.pago).length;
+    $('al-resumo').innerHTML = `✅ ${pagos} pagos · ⏳ ${dados.length - pagos} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer`;
+    document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
+    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && !d.pago) || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'repor' && d.saldo > 0));
+    el.innerHTML = lista.length ? lista.map(d => {
+        const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`;
+        return `
+        <div class="class-card" style="border-left:6px solid ${d.pago ? '#2a9d8f' : '#ff9f1c'};">
+            <p>🏊‍♂️ <b>${esc(d.c)}</b></p>
+            <p><small>Resp: ${esc(d.p.nome_responsavel)} · 📞 ${esc(d.p.telefone || 'N/A')}</small></p>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;">
+                <button class="mini-btn" style="background:${d.pago ? '#2a9d8f' : '#ff9f1c'};" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">${d.pago ? '✅ Pago' : '⏳ Pendente'}</button>
+                ${d.pago ? '' : linkCobranca(d.p, d.c)}
+            </div>
+            <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
+            <div>${d.fs.map(f => `<span class="chip-falta">${fmtData(f.data)} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`).join('')}</div>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+                <input type="date" value="${hojeISO()}" style="flex:1; padding:8px; border:2px solid #e0e0e0; border-radius:8px;">
+                <button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>
+            </div>
+        </div>`;
+    }).join('') : '<p class="card" style="text-align:center;">Nenhum aluno encontrado.</p>';
+}
+
+window.mudarMesAl = delta => {
+    const [a, m] = mesAl.split('-').map(Number), d = new Date(a, m - 1 + delta, 1);
+    mesAl = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    ouvirMensalidades();
+    renderAlunos();
+};
+window.filtrarAlunos = f => { filtroAl = f; renderAlunos(); };
+window.alternarPagamento = async function(uid, crianca) {
+    const id = idMens(uid, crianca, mesAl), pago = !!mensAdmin[id]?.pago;
+    if (pago && !confirm("Desmarcar este pagamento?")) return;
+    try {
+        await setDoc(doc(db, "mensalidades", id), { id_responsavel: uid, nome_crianca: crianca, mes: mesAl, pago: !pago, atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || '' });
+    } catch (e) { alert("Erro ao salvar: " + (e.code || e.message)); }
+};
+window.registrarFalta = async function(uid, crianca, data) {
+    if (!data) return alert("Escolha a data da falta.");
+    try {
+        await addDoc(collection(db, "faltas"), { id_responsavel: uid, nome_crianca: crianca, data, mes: data.slice(0, 7), registrado_por: ADMINS[auth.currentUser?.email] || '', criado_em: Date.now() });
+    } catch (e) { alert("Erro ao registrar falta: " + (e.code || e.message)); }
+};
+window.removerFalta = async function(id) {
+    if (!confirm("Remover esta falta?")) return;
+    try { await deleteDoc(doc(db, "faltas", id)); } catch (e) { alert("Erro ao remover: " + (e.code || e.message)); }
+};
 
 // ===== EDITAR TURMA =====
 function resetarForm() {
@@ -686,6 +802,12 @@ h2 { color:var(--dark); margin-bottom:15px; text-align:center; font-size:22px; }
 @media (prefers-reduced-motion: reduce) { .bolha, .onda, #logo-img, #logo-texto, .header > div:last-child, .modal-box, .admin-section, .parent-section { animation:none !important; } }
 /* marca d'água da logo (usa o mesmo logo.png; sem o arquivo, simplesmente não aparece) */
 body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:none; background:url("logo.png") center 45% / min(75vw, 460px) auto no-repeat; opacity:.12; mix-blend-mode:multiply; }
+#priv-texto p { margin-top:10px; }
+.chips { display:flex; gap:6px; flex-wrap:wrap; }
+.chip { background:#e0e0e0; color:#555; border:none; border-radius:20px; padding:6px 12px; font-size:13px; font-weight:bold; cursor:pointer; }
+.chip.on { background:var(--primary); color:#fff; }
+.chip-falta { display:inline-block; background:#ffe8cc; border-radius:12px; padding:3px 10px; font-size:12px; margin:3px 4px 0 0; }
+.chip-falta a { color:#c1121f; cursor:pointer; margin-left:4px; font-weight:bold; }
 </style>
 </head>
 <body>
@@ -715,6 +837,7 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
                 <div class="form-group"><label>Senha</label><input type="password" id="login-pass" required></div>
                 <button type="submit" class="btn-action">Entrar 🏊‍♂️</button>
                 <a class="toggle-link" id="show-register">É novo aqui? Criar conta!</a>
+                <a class="toggle-link" style="font-weight:normal; font-size:13px;" onclick="window.abrirPrivacidade()">Aviso de privacidade</a>
             </form>
         </div>
         <div id="register-box" class="card" style="display:none;">
@@ -725,6 +848,7 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
                 <div class="form-group"><label>Nome do Peixinho(a)</label><input type="text" id="reg-crianca" required placeholder="Primeiro aluno"></div>
                 <div class="form-group"><label>Nome de Usuário (Sem espaços)</label><input type="text" id="reg-user" required placeholder="ex: familiasilva"></div>
                 <div class="form-group"><label>Senha (Mínimo 6 caracteres)</label><input type="password" id="reg-pass" required minlength="6"></div>
+                <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin:5px 0;"><input type="checkbox" id="reg-aceite" required style="width:auto; margin-top:3px;"><span>Li e aceito o <a href="#" onclick="event.preventDefault(); window.abrirPrivacidade()">aviso de privacidade</a>, inclusive o uso dos dados da criança.</span></label>
                 <button type="submit" class="btn-action">Finalizar Cadastro</button>
                 <a class="toggle-link" id="show-login">Já tenho conta. Voltar ao Login!</a>
             </form>
@@ -740,6 +864,7 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
                 <div class="nav-tab" data-aba="admin-nova" onclick="window.novaTurma()">➕ Liberar Turma</div>
                 <div class="nav-tab" data-aba="admin-calendario" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</div>
                 <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')">🔔 Atividade</div>
+                <div class="nav-tab" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')">💰 Alunos</div>
             </div>
             <div id="admin-nova" class="admin-section card" style="display:none;">
                 <h2 id="titulo-form-turma">Liberar Nova Turma</h2>
@@ -768,6 +893,23 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
                 <div id="cal-corpo"></div>
                 <p style="font-size:12px; color:#555; margin-top:10px;"><span style="color:#0077be">●</span> Tia Bruna &nbsp; <span style="color:#ff9f1c">●</span> Tia Auri</p>
                 <div id="cal-dia-detalhe"></div>
+            </div>
+            <div id="admin-alunos" class="admin-section" style="display:none;">
+                <div class="card">
+                    <div class="cal-head">
+                        <button type="button" onclick="window.mudarMesAl(-1)">‹</button>
+                        <h2 id="al-mes" style="margin:0; font-size:18px;"></h2>
+                        <button type="button" onclick="window.mudarMesAl(1)">›</button>
+                    </div>
+                    <p id="al-resumo" style="text-align:center; font-size:14px; margin-bottom:10px;"></p>
+                    <div class="chips">
+                        <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
+                        <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarAlunos('pendentes')">⏳ Pendentes</button>
+                        <button type="button" class="chip" data-f="pagos" onclick="window.filtrarAlunos('pagos')">✅ Pagos</button>
+                        <button type="button" class="chip" data-f="repor" onclick="window.filtrarAlunos('repor')">🔁 A repor</button>
+                    </div>
+                </div>
+                <div id="lista-alunos-admin">Carregando...</div>
             </div>
             <div id="admin-atividade" class="admin-section" style="display:none;">
                 <div id="lista-atividade">Carregando...</div>
@@ -823,6 +965,17 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
 </div>
 
 <div id="toast"></div>
+
+<div id="modal-privacidade" class="modal-overlay">
+    <div class="modal-box" style="max-height:85vh; overflow-y:auto; text-align:left; font-size:14px; color:#444; line-height:1.5;">
+        <div id="priv-texto"></div>
+        <div id="priv-botoes-leitura"><button class="btn-action" onclick="window.fecharPrivacidade()">Fechar</button></div>
+        <div id="priv-botoes-aceite" style="display:none; gap:10px;">
+            <button class="btn-action" style="background:#888;" onclick="window.fecharPrivacidade(); document.getElementById('btn-logout').click()">Sair</button>
+            <button class="btn-action" onclick="window.aceitarPrivacidade()">Li e aceito</button>
+        </div>
+    </div>
+</div>
 
 <div id="modal-whats" class="modal-overlay">
     <div class="modal-box">
