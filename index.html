@@ -30,6 +30,8 @@ const ADMINS = { 'bruna@splash.com': 'Tia Bruna', 'auri@splash.com': 'Tia Auri' 
 const RESERVADOS = ['bruna', 'auri'];
 // Dados da escola usados no aviso de privacidade. Preencha o contato (WhatsApp ou e-mail) para pedidos sobre dados.
 const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625' };
+// PIX para a mensalidade. Preencha a chave (obrigatório), o tipo (CPF, CNPJ, Telefone, E-mail ou Aleatória) e, se quiser, o valor.
+const PIX = { chave: '', tipo: 'Telefone', beneficiario: 'SPLASH! Natação', valor: '' };
 // OPCIONAL: WhatsApp direto de cada professora (só números, com DDD). Ex: '85999998888'.
 // Vazio = ao tocar no botão, o pai escolhe no próprio WhatsApp o grupo (ou contato) para enviar.
 const WHATS_PROFS = { 'Tia Bruna': '', 'Tia Auri': '' };
@@ -39,7 +41,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtData = d => d ? d.split('-').reverse().join('/') : '';
 const hojeISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-let editandoId = null, unsubMens = null, respAdmin = [], faltasAdmin = [], mensAdmin = {}, mesAl = hojeISO().slice(0, 7), filtroAl = 'todos';
+let editandoId = null, unsubMens = null, respAdmin = [], faltasAdmin = [], mensAdmin = {}, mesAl = hojeISO().slice(0, 7), filtroAl = 'todos', mesPai = hojeISO().slice(0, 7), mensPai = {};
 const cancelarListeners = () => { unsubs.forEach(u => u()); unsubs = []; if (unsubMens) { unsubMens(); unsubMens = null; } };
 
 // Última visita do responsável (para marcar turmas novas)
@@ -96,6 +98,7 @@ async function iniciarPai(user) {
     $('user-name-display').innerHTML = `🌊 Olá, <b>${esc(d.nome_responsavel)}</b>`;
     window.mudarAbaPai('pai-aulas');
     ouvirTurmas('lista-aulas-disponiveis', renderPais);
+    ouvirPagamentosPai();
     carregarMeusAgendamentos();
     renderizarPerfil();
 }
@@ -183,7 +186,7 @@ window.mudarAbaAdmin = id => {
     trocarAba('admin-panel', 'admin-section', id);
     if (saindo) marcarVistoAdmin(); // ao sair da aba, o que estava novo passa a ser "visto"
 };
-window.mudarAbaPai = id => trocarAba('parent-panel', 'parent-section', id);
+window.mudarAbaPai = id => { trocarAba('parent-panel', 'parent-section', id); if (id === 'pai-pagamento') renderPagamento(); };
 
 // ===== TURMAS (listener compartilhado) =====
 function ouvirTurmas(alvoId, render) {
@@ -317,7 +320,7 @@ window.novaTurmaNoDia = iso => { window.novaTurma(); $('turma-data').value = iso
 const textoPrivacidade = () => `
     <h2 style="color:var(--primary); font-size:20px;">🔒 Aviso de Privacidade</h2>
     <p><b>Quem cuida dos dados:</b> ${esc(ESCOLA.nome)}.</p>
-    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, as faltas e a situação da mensalidade (pago ou pendente).</p>
+    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, as faltas, a situação da mensalidade (pago ou pendente) e, se você enviar, o comprovante de pagamento.</p>
     <p><b>Para quê:</b> agendar aulas e reposições, organizar as turmas e avisar sobre as aulas. Não usamos os dados para publicidade e não os vendemos.</p>
     <p><b>Quem acessa:</b> as professoras e a administração da escola. Os dados ficam guardados na plataforma Google Firebase.</p>
     <p><b>Crianças:</b> ao cadastrar uma criança, você declara ser o responsável legal por ela e consente com o uso do nome dela para as finalidades acima.</p>
@@ -406,6 +409,7 @@ function renderAtividade() {
 // ===== ALUNOS: MENSALIDADE + FALTAS/REPOSIÇÃO (professora) =====
 const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
 const idMens = (uid, crianca, mes) => `${uid}__${slug(crianca)}__${mes}`;
+const statusMens = m => m?.status || (m?.pago ? 'pago' : 'pendente');
 const nomeMes = m => `${MESES[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;
 
 function ouvirAlunosAdmin() {
@@ -416,9 +420,15 @@ function ouvirAlunosAdmin() {
 }
 function ouvirMensalidades() {
     if (unsubMens) unsubMens();
+    let primeira = true;
     unsubMens = onSnapshot(query(collection(db, "mensalidades"), where("mes", "==", mesAl)), snap => {
         mensAdmin = {};
         snap.docs.forEach(d => { mensAdmin[d.id] = d.data(); });
+        if (!primeira) snap.docChanges().forEach(c => {
+            const m = c.doc.data();
+            if (c.type !== 'removed' && m.status === 'informado' && m.informado_em > Date.now() - 15000) toast(`💳 Pagamento informado: ${m.nome_crianca}. Confirme na aba Alunos.`);
+        });
+        primeira = false;
         renderAlunos();
     }, err => { console.error(err); const el = $('lista-alunos-admin'); if (el) el.innerHTML = `<p class="card erro">Erro ao carregar mensalidades (${esc(err.code)}). Confira as regras do Firestore.</p>`; });
 }
@@ -437,12 +447,15 @@ function renderAlunos() {
     const dados = respAdmin.flatMap(p => (p.criancas || []).map(c => {
         const fs = faltasAdmin.filter(f => f.id_responsavel === p.uid && f.nome_crianca === c).sort((x, y) => x.data.localeCompare(y.data));
         const reps = agsAdmin.filter(a => a.id_responsavel === p.uid && a.nome_crianca === c).length;
-        return { p, c, pago: !!mensAdmin[idMens(p.uid, c, mesAl)]?.pago, fs, reps, saldo: Math.max(0, fs.length - reps) };
+        return { p, c, st: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]), m: mensAdmin[idMens(p.uid, c, mesAl)], pago: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]) === 'pago', fs, reps, saldo: Math.max(0, fs.length - reps) };
     })).sort((x, y) => x.c.localeCompare(y.c));
     const pagos = dados.filter(d => d.pago).length;
-    $('al-resumo').innerHTML = `✅ ${pagos} pagos · ⏳ ${dados.length - pagos} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer`;
+    $('al-resumo').innerHTML = `✅ ${pagos} pagos · 🟡 ${dados.filter(d => d.st === 'informado').length} a confirmar · ⏳ ${dados.filter(d => d.st === 'pendente').length} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer`;
+    const nConf = dados.filter(d => d.st === 'informado').length;
+    const abaAl = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
+    if (abaAl) abaAl.textContent = nConf ? `💰 Alunos 🟡 ${nConf}` : '💰 Alunos';
     document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
-    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && !d.pago) || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'repor' && d.saldo > 0));
+    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && d.st !== 'pago') || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'confirmar' && d.st === 'informado') || (filtroAl === 'repor' && d.saldo > 0));
     el.innerHTML = lista.length ? lista.map(d => {
         const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`;
         return `
@@ -450,8 +463,11 @@ function renderAlunos() {
             <p>🏊‍♂️ <b>${esc(d.c)}</b></p>
             <p><small>Resp: ${esc(d.p.nome_responsavel)} · 📞 ${esc(d.p.telefone || 'N/A')}</small></p>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;">
-                <button class="mini-btn" style="background:${d.pago ? '#2a9d8f' : '#ff9f1c'};" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">${d.pago ? '✅ Pago' : '⏳ Pendente'}</button>
-                ${d.pago ? '' : linkCobranca(d.p, d.c)}
+                ${d.st === 'informado'
+                    ? `<button class="mini-btn" style="background:#2a9d8f;" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">✅ Confirmar pagamento</button><button class="mini-btn" style="background:#c1121f;" ${at} onclick="window.recusarPagamento(this.dataset.uid, this.dataset.nome)">↩ Recusar</button>`
+                    : `<button class="mini-btn" style="background:${d.pago ? '#2a9d8f' : '#ff9f1c'};" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">${d.pago ? '✅ Pago' : '⏳ Pendente'}</button>`}
+                ${d.m?.comprovante ? `<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.verComprovante(this.dataset.uid, this.dataset.nome)">🧾 Comprovante</button>` : ''}
+                ${d.st === 'pendente' ? linkCobranca(d.p, d.c) : ''}
             </div>
             <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
             <div>${d.fs.map(f => `<span class="chip-falta">${fmtData(f.data)} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`).join('')}</div>
@@ -471,11 +487,24 @@ window.mudarMesAl = delta => {
 };
 window.filtrarAlunos = f => { filtroAl = f; renderAlunos(); };
 window.alternarPagamento = async function(uid, crianca) {
-    const id = idMens(uid, crianca, mesAl), pago = !!mensAdmin[id]?.pago;
-    if (pago && !confirm("Desmarcar este pagamento?")) return;
+    const id = idMens(uid, crianca, mesAl), st = statusMens(mensAdmin[id]);
+    if (st === 'pago' && !confirm("Desmarcar este pagamento?")) return;
+    const novo = st === 'pago' ? 'pendente' : 'pago';
     try {
-        await setDoc(doc(db, "mensalidades", id), { id_responsavel: uid, nome_crianca: crianca, mes: mesAl, pago: !pago, atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || '' });
+        await setDoc(doc(db, "mensalidades", id), { id_responsavel: uid, nome_crianca: crianca, mes: mesAl, status: novo, pago: novo === 'pago', atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || '' }, { merge: true });
     } catch (e) { alert("Erro ao salvar: " + (e.code || e.message)); }
+};
+window.recusarPagamento = async function(uid, crianca) {
+    if (!confirm("Recusar este pagamento? O responsável poderá enviar de novo.")) return;
+    try {
+        await setDoc(doc(db, "mensalidades", idMens(uid, crianca, mesAl)), { status: 'pendente', pago: false, comprovante: '', recusado_em: Date.now(), atualizado_em: Date.now() }, { merge: true });
+    } catch (e) { alert("Erro ao recusar: " + (e.code || e.message)); }
+};
+window.verComprovante = (uid, crianca) => {
+    const m = mensAdmin[idMens(uid, crianca, mesAl)];
+    if (!m?.comprovante) return;
+    $('comp-img').src = m.comprovante;
+    $('modal-comp').style.display = 'flex';
 };
 window.registrarFalta = async function(uid, crianca, data) {
     if (!data) return alert("Escolha a data da falta.");
@@ -486,6 +515,73 @@ window.registrarFalta = async function(uid, crianca, data) {
 window.removerFalta = async function(id) {
     if (!confirm("Remover esta falta?")) return;
     try { await deleteDoc(doc(db, "faltas", id)); } catch (e) { alert("Erro ao remover: " + (e.code || e.message)); }
+};
+
+// ===== PAGAMENTO (pais) =====
+function ouvirPagamentosPai() {
+    unsubs.push(onSnapshot(query(collection(db, "mensalidades"), where("id_responsavel", "==", currentUserData.uid)), snap => {
+        mensPai = {};
+        snap.docs.forEach(d => { mensPai[d.id] = d.data(); });
+        renderPagamento();
+    }, err => console.error(err)));
+}
+function renderPagamento() {
+    const el = $('lista-pagamento');
+    if (!el || !currentUserData) return;
+    $('pg-mes').textContent = nomeMes(mesPai);
+    $('pix-box').innerHTML = PIX.chave
+        ? `<p><b>Chave PIX (${esc(PIX.tipo)}):</b></p><p style="font-size:18px; word-break:break-all; margin:6px 0;">${esc(PIX.chave)}</p><p><small>Favorecido: ${esc(PIX.beneficiario)}${PIX.valor ? ' · Valor: ' + esc(PIX.valor) : ''}</small></p><button class="btn-action" data-chave="${esc(PIX.chave)}" onclick="window.copiarPix(this)">📋 Copiar chave PIX</button>`
+        : '<p style="text-align:center;">A chave PIX ainda não foi cadastrada. Fale com a escola.</p>';
+    const criancas = currentUserData.criancas || [];
+    el.innerHTML = criancas.length ? criancas.map(c => {
+        const m = mensPai[idMens(currentUserData.uid, c, mesPai)], st = statusMens(m), at = `data-nome="${esc(c)}"`;
+        const corpo = st === 'pago' ? '<p style="color:#2a9d8f; font-weight:bold;">✅ Pago. Obrigado!</p>'
+            : st === 'informado' ? '<p style="color:#b07d00; font-weight:bold;">🟡 Enviado. Aguardando a professora confirmar.</p>'
+            : `${m?.recusado_em ? '<p class="erro" style="text-align:left; font-size:13px;">↩ O pagamento não foi confirmado. Envie o comprovante de novo ou fale com a escola.</p>' : '<p style="color:#c26a00; font-weight:bold;">⏳ Pendente</p>'}
+               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+                   <label class="mini-btn" style="background:var(--orange);">📎 Enviar comprovante<input type="file" accept="image/*" hidden ${at} onchange="window.enviarComprovante(this)"></label>
+                   <button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.informarPagamento(this.dataset.nome)">Já paguei (sem anexo)</button>
+               </div>`;
+        return `<div class="class-card"><p>🏊‍♂️ <b>${esc(c)}</b></p>${corpo}</div>`;
+    }).join('') : '<p style="text-align:center;">Cadastre um aluno na aba Perfil.</p>';
+}
+window.mudarMesPai = delta => {
+    const [a, m] = mesPai.split('-').map(Number), d = new Date(a, m - 1 + delta, 1);
+    mesPai = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    renderPagamento();
+};
+window.copiarPix = btn => {
+    navigator.clipboard.writeText(btn.dataset.chave).then(() => toast('📋 Chave PIX copiada!')).catch(() => prompt('Copie a chave PIX:', btn.dataset.chave));
+};
+function comprimirImagem(file, maxLado = 1100, qualidade = 0.6) {
+    return new Promise((resolve, reject) => {
+        const img = new Image(), url = URL.createObjectURL(file);
+        img.onload = () => {
+            const k = Math.min(1, maxLado / Math.max(img.width, img.height)), c = document.createElement('canvas');
+            c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+            c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+            URL.revokeObjectURL(url);
+            const out = c.toDataURL('image/jpeg', qualidade);
+            out.length > 800000 ? reject(new Error('imagem muito grande')) : resolve(out);
+        };
+        img.onerror = () => reject(new Error('imagem inválida'));
+        img.src = url;
+    });
+}
+window.enviarComprovante = input => {
+    const f = input.files[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) { input.value = ''; return alert("Envie uma foto ou um print (imagem). Se o comprovante for PDF, tire um print da tela."); }
+    window.informarPagamento(input.dataset.nome, f);
+    input.value = '';
+};
+window.informarPagamento = async function(crianca, arquivo) {
+    const dados = { id_responsavel: currentUserData.uid, nome_crianca: crianca, mes: mesPai, status: 'informado', pago: false, informado_em: Date.now() };
+    try {
+        if (arquivo) dados.comprovante = await comprimirImagem(arquivo);
+        await setDoc(doc(db, "mensalidades", idMens(currentUserData.uid, crianca, mesPai)), dados, { merge: true });
+        toast('✅ Enviado! A professora vai confirmar o pagamento.');
+    } catch (e) { alert("Erro ao enviar: " + (e.code || e.message)); }
 };
 
 // ===== EDITAR TURMA =====
@@ -906,6 +1002,7 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
                         <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
                         <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarAlunos('pendentes')">⏳ Pendentes</button>
                         <button type="button" class="chip" data-f="pagos" onclick="window.filtrarAlunos('pagos')">✅ Pagos</button>
+                        <button type="button" class="chip" data-f="confirmar" onclick="window.filtrarAlunos('confirmar')">🟡 A confirmar</button>
                         <button type="button" class="chip" data-f="repor" onclick="window.filtrarAlunos('repor')">🔁 A repor</button>
                     </div>
                 </div>
@@ -923,10 +1020,22 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
             <div class="nav-tabs">
                 <div class="nav-tab active" data-aba="pai-aulas" onclick="window.mudarAbaPai('pai-aulas')">🏊‍♂️ Aulas</div>
                 <div class="nav-tab" data-aba="pai-agendamentos" onclick="window.mudarAbaPai('pai-agendamentos')">📅 Agendados</div>
+                <div class="nav-tab" data-aba="pai-pagamento" onclick="window.mudarAbaPai('pai-pagamento')">💳 Pagamento</div>
                 <div class="nav-tab" data-aba="pai-perfil" onclick="window.mudarAbaPai('pai-perfil')">⚙️ Perfil</div>
             </div>
             <div id="pai-aulas" class="parent-section"><div id="lista-aulas-disponiveis">Buscando aulas...</div></div>
             <div id="pai-agendamentos" class="parent-section" style="display:none;"><div id="lista-meus-agendamentos">Buscando...</div></div>
+            <div id="pai-pagamento" class="parent-section" style="display:none;">
+                <div class="card"><h2>💳 Mensalidade</h2><div id="pix-box"></div></div>
+                <div class="card">
+                    <div class="cal-head">
+                        <button type="button" onclick="window.mudarMesPai(-1)">‹</button>
+                        <h2 id="pg-mes" style="margin:0; font-size:18px;"></h2>
+                        <button type="button" onclick="window.mudarMesPai(1)">›</button>
+                    </div>
+                    <div id="lista-pagamento"></div>
+                </div>
+            </div>
             <div id="pai-perfil" class="parent-section card" style="display:none;">
                 <h2>Meu Perfil Familiar</h2>
                 <div class="form-group" style="margin-top:20px;">
@@ -965,6 +1074,13 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
 </div>
 
 <div id="toast"></div>
+
+<div id="modal-comp" class="modal-overlay">
+    <div class="modal-box" style="max-height:90vh; overflow:auto;">
+        <img id="comp-img" alt="Comprovante" style="max-width:100%; border-radius:10px;">
+        <button class="btn-action" onclick="document.getElementById('modal-comp').style.display='none'">Fechar</button>
+    </div>
+</div>
 
 <div id="modal-privacidade" class="modal-overlay">
     <div class="modal-box" style="max-height:85vh; overflow-y:auto; text-align:left; font-size:14px; color:#444; line-height:1.5;">
