@@ -582,12 +582,51 @@ window.salvarTelefone = async function() {
         alert("Telefone atualizado com sucesso!");
     } catch (e) { alert("Erro ao salvar telefone."); }
 };
+
+// ===== EFEITOS DE PISCINA =====
+(function () {
+    const reduz = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const camada = document.getElementById('bolhas');
+    if (camada && !reduz) {
+        for (let i = 0; i < 14; i++) { // troque o 14 para mais ou menos bolhas
+            const b = document.createElement('i');
+            const tam = 10 + Math.random() * 30;
+            b.className = 'bolha';
+            b.style.cssText = `width:${tam}px;height:${tam}px;left:${Math.random() * 100}%;animation-duration:${9 + Math.random() * 10}s;animation-delay:-${Math.random() * 18}s;--bal:${(Math.random() * 40 - 20).toFixed(0)}px`;
+            camada.appendChild(b);
+        }
+    }
+    function splash(x, y) {
+        const anel = document.createElement('div');
+        anel.className = 'splash-anel';
+        anel.style.left = x + 'px'; anel.style.top = y + 'px';
+        document.body.appendChild(anel);
+        setTimeout(() => anel.remove(), 650);
+        for (let i = 0; i < 9; i++) {
+            const g = document.createElement('div');
+            const a = (20 + i * 17.5 + Math.random() * 8) * Math.PI / 180, r = 45 + Math.random() * 55;
+            g.className = 'gota';
+            g.style.cssText = `left:${x}px;top:${y}px;--dx:${(Math.cos(a) * r).toFixed(0)}px;--dy:${(-Math.sin(a) * r).toFixed(0)}px;animation-delay:${(i % 3) * 20}ms`;
+            document.body.appendChild(g);
+            setTimeout(() => g.remove(), 850);
+        }
+    }
+    document.addEventListener('click', (e) => {
+        if (reduz) return;
+        const alvo = e.target.closest('button, .nav-tab, .btn-wpp, .toggle-link, .cal-dia');
+        if (!alvo) return;
+        alvo.classList.remove('mergulho'); void alvo.offsetWidth; alvo.classList.add('mergulho');
+        let x = e.clientX, y = e.clientY;
+        if (!x && !y) { const r = alvo.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height / 2; }
+        splash(x, y);
+    });
+})();
 </script>
 
 <style>
 :root { --primary:#0077be; --secondary:#00b4d8; --light:#caf0f8; --dark:#023e8a; --white:#fff; --orange:#ff9f1c; }
 * { box-sizing:border-box; font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; margin:0; padding:0; }
-body { background:var(--light); color:#333; padding-bottom:30px; }
+body { background:linear-gradient(180deg,#caf0f8 0%,#a8e6f5 55%,#7fd8ee 100%) fixed; color:#333; padding-bottom:80px; min-height:100vh; }
 .header { background:linear-gradient(135deg,var(--primary),var(--secondary)); color:#fff; padding:20px; text-align:center; border-radius:0 0 30px 30px; box-shadow:0 4px 10px rgba(0,0,0,.1); }
 .container { max-width:600px; margin:30px auto; padding:0 20px; }
 .card { background:#fff; border-radius:20px; padding:25px; box-shadow:0 5px 15px rgba(0,0,0,.05); margin-bottom:20px; }
@@ -621,9 +660,37 @@ h2 { color:var(--dark); margin-bottom:15px; text-align:center; font-size:22px; }
 .mini-btn { background:var(--primary); color:#fff; border:none; border-radius:8px; padding:7px 12px; font-size:13px; font-weight:bold; cursor:pointer; }
 #toast { display:none; position:fixed; top:12px; left:50%; transform:translateX(-50%); background:var(--dark); color:#fff; padding:12px 18px; border-radius:12px; z-index:2000; box-shadow:0 4px 14px rgba(0,0,0,.3); max-width:90%; text-align:center; font-weight:bold; font-size:14px; }
 .btn-wpp { display:block; background:#25d366; color:#fff; text-align:center; padding:12px; border-radius:10px; text-decoration:none; font-weight:bold; margin-top:10px; }
+/* ===== PISCINA ===== */
+.header, .container { position:relative; z-index:1; }
+#bolhas { position:fixed; inset:0; overflow:hidden; pointer-events:none; z-index:0; }
+.bolha { position:absolute; bottom:-60px; border-radius:50%; background:radial-gradient(circle at 30% 30%, rgba(255,255,255,.95), rgba(255,255,255,.3) 45%, rgba(255,255,255,.08)); border:1px solid rgba(255,255,255,.65); animation:subir linear infinite; }
+@keyframes subir { 0% { transform:translate(0,0) scale(.6); opacity:0; } 10% { opacity:.9; } 50% { transform:translate(var(--bal),-58vh) scale(1); } 100% { transform:translate(calc(var(--bal) * -1),-118vh) scale(1.1); opacity:0; } }
+.onda { position:fixed; left:0; right:0; bottom:0; height:64px; pointer-events:none; z-index:0; opacity:.5; background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 64' preserveAspectRatio='none'%3E%3Cpath d='M0 32 Q75 4 150 32 T300 32 T450 32 T600 32 V64 H0 Z' fill='%2300b4d8'/%3E%3C/svg%3E") repeat-x bottom; background-size:600px 100%; animation:ondular 10s linear infinite; }
+.onda2 { height:48px; opacity:.35; animation-duration:7s; animation-direction:reverse; }
+@keyframes ondular { to { background-position-x:600px; } }
+@keyframes flutuar { 50% { transform:translateY(-5px); } }
+@keyframes cair { from { transform:translateY(-60px); opacity:0; } 60% { transform:translateY(8px); opacity:1; } to { transform:none; opacity:1; } }
+@keyframes surgir { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes mergulhar { from { transform:translateY(-50px) scale(.92); opacity:0; } 60% { transform:translateY(6px) scale(1.01); opacity:1; } to { transform:none; opacity:1; } }
+@keyframes mergulho { 0% { transform:scale(1); } 30% { transform:scale(.9) translateY(4px); } 60% { transform:scale(1.05) translateY(-3px); } 100% { transform:scale(1); } }
+#logo-img, #logo-texto { animation:cair .9s ease both, flutuar 4s ease-in-out .9s infinite; }
+.header > div:last-child { animation:cair .9s .15s ease both; }
+.admin-section, .parent-section { animation:surgir .3s ease; }
+.modal-box { animation:mergulhar .4s ease; }
+.mergulho { animation:mergulho .45s ease; }
+.card, .class-card { box-shadow:0 4px 14px rgba(0,119,190,.14); }
+.splash-anel { position:fixed; width:20px; height:20px; margin:-10px 0 0 -10px; border:3px solid rgba(255,255,255,.95); border-radius:50%; box-shadow:0 0 0 1px rgba(0,119,190,.35); pointer-events:none; z-index:3000; animation:anel .6s ease-out forwards; }
+@keyframes anel { to { transform:scale(6); opacity:0; } }
+.gota { position:fixed; width:9px; height:9px; margin:-4px 0 0 -4px; border-radius:50% 50% 50% 50% / 60% 60% 40% 40%; background:radial-gradient(circle at 30% 30%, #fff, #90e0ef 60%, #00b4d8); border:1px solid rgba(0,119,190,.4); pointer-events:none; z-index:3000; animation:gota .7s cubic-bezier(.2,.7,.4,1) forwards; }
+@keyframes gota { 0% { transform:translate(0,0) scale(1); opacity:1; } 45% { transform:translate(calc(var(--dx) * .6), var(--dy)) scale(1); opacity:1; } 100% { transform:translate(var(--dx), calc(var(--dy) * -.3 + 30px)) scale(.4); opacity:0; } }
+@media (prefers-reduced-motion: reduce) { .bolha, .onda, #logo-img, #logo-texto, .header > div:last-child, .modal-box, .admin-section, .parent-section { animation:none !important; } }
 </style>
 </head>
 <body>
+
+<div id="bolhas" aria-hidden="true"></div>
+<div class="onda" aria-hidden="true"></div>
+<div class="onda onda2" aria-hidden="true"></div>
 
 <div class="header">
     <img id="logo-img" src="logo.png" alt="Logo da escola" style="display:block; margin:0 auto; max-height:90px; max-width:80%; background:#fff; border-radius:15px; padding:8px 16px; box-shadow:0 4px 8px rgba(0,0,0,.1);" onerror="this.style.display='none'; document.getElementById('logo-texto').style.display='inline-block';">
