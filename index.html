@@ -444,13 +444,20 @@ function renderAlunos() {
     const el = $('lista-alunos-admin');
     if (!el) return;
     $('al-mes').textContent = nomeMes(mesAl);
-    const dados = respAdmin.flatMap(p => (p.criancas || []).map(c => {
+    const dados = respAdmin.flatMap(p => (p.criancas?.length ? p.criancas : (p.nome_crianca ? [p.nome_crianca] : [])).map(c => {
         const fs = faltasAdmin.filter(f => f.id_responsavel === p.uid && f.nome_crianca === c).sort((x, y) => x.data.localeCompare(y.data));
         const reps = agsAdmin.filter(a => a.id_responsavel === p.uid && a.nome_crianca === c).length;
         return { p, c, st: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]), m: mensAdmin[idMens(p.uid, c, mesAl)], pago: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]) === 'pago', fs, reps, saldo: Math.max(0, fs.length - reps) };
     })).sort((x, y) => x.c.localeCompare(y.c));
+    const vistos = new Set(dados.map(d => idMens(d.p.uid, d.c, mesAl)));
+    Object.entries(mensAdmin).forEach(([id, m]) => {
+        if (vistos.has(id)) return;
+        const p = respAdmin.find(r => r.uid === m.id_responsavel) || { uid: m.id_responsavel, nome_responsavel: 'Responsável (perfil não encontrado)', telefone: '' };
+        dados.push({ p, c: m.nome_crianca, st: statusMens(m), m, pago: statusMens(m) === 'pago', fs: [], reps: 0, saldo: 0 });
+    });
+    dados.sort((x, y) => x.c.localeCompare(y.c));
     const pagos = dados.filter(d => d.pago).length;
-    $('al-resumo').innerHTML = `✅ ${pagos} pagos · 🟡 ${dados.filter(d => d.st === 'informado').length} a confirmar · ⏳ ${dados.filter(d => d.st === 'pendente').length} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer`;
+    $('al-resumo').innerHTML = `✅ ${pagos} pagos · 🟡 ${dados.filter(d => d.st === 'informado').length} a confirmar · ⏳ ${dados.filter(d => d.st === 'pendente').length} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer · 📄 ${Object.keys(mensAdmin).length} registro(s) de pagamento neste mês`;
     const nConf = dados.filter(d => d.st === 'informado').length;
     const abaAl = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
     if (abaAl) abaAl.textContent = nConf ? `💰 Alunos 🟡 ${nConf}` : '💰 Alunos';
@@ -580,7 +587,7 @@ window.informarPagamento = async function(crianca, arquivo) {
     try {
         if (arquivo) dados.comprovante = await comprimirImagem(arquivo);
         await setDoc(doc(db, "mensalidades", idMens(currentUserData.uid, crianca, mesPai)), dados, { merge: true });
-        toast('✅ Enviado! A professora vai confirmar o pagamento.');
+        toast(`✅ Enviado (${nomeMes(mesPai)})! A professora vai confirmar o pagamento.`);
     } catch (e) { alert("Erro ao enviar: " + (e.code || e.message)); }
 };
 
