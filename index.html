@@ -33,6 +33,8 @@ const RESERVADOS = ['bruna', 'auri'];
 const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625' };
 // PIX para a mensalidade. Preencha a chave (obrigatório), o tipo (CPF, CNPJ, Telefone, E-mail ou Aleatória) e, se quiser, o valor.
 const PIX = { chave: '', tipo: 'Telefone', beneficiario: 'SPLASH! Natação', valor: '' };
+// Mensalidade padrão (R$) e dia do vencimento. Cada aluno pode ter valor e vencimento próprios (botão ⚙️ Plano).
+const FINANCEIRO = { valorPadrao: 0, vencimentoPadrao: 10 };
 // OPCIONAL: WhatsApp direto de cada professora (só números, com DDD). Ex: '85999998888'.
 // Vazio = ao tocar no botão, o pai escolhe no próprio WhatsApp o grupo (ou contato) para enviar.
 const WHATS_PROFS = { 'Tia Bruna': '', 'Tia Auri': '' };
@@ -79,6 +81,7 @@ onAuthStateChanged(auth, async (user) => {
         ouvirAgendamentosAdmin();
         ouvirAlunosAdmin();
         ouvirHistorico();
+        ouvirPlanos();
     } else {
         iniciarPai(user);
     }
@@ -103,6 +106,7 @@ async function iniciarPai(user) {
     window.mudarAbaPai('pai-aulas');
     ouvirTurmas('lista-aulas-disponiveis', renderPais);
     ouvirPagamentosPai();
+    ouvirPlanosPai();
     carregarMeusAgendamentos();
     renderizarPerfil();
 }
@@ -354,7 +358,7 @@ window.fabAcao = () => { if (abaAdmin === 'admin-calendario' && diaSel >= hojeIS
 const textoPrivacidade = () => `
     <h2 style="color:var(--primary); font-size:20px;">🔒 Aviso de Privacidade</h2>
     <p><b>Quem cuida dos dados:</b> ${esc(ESCOLA.nome)}.</p>
-    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, a presença nas aulas, as faltas, a situação da mensalidade (pago ou pendente) e, se você enviar, o comprovante de pagamento.</p>
+    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, a presença nas aulas, as faltas, a situação, o valor e a data de pagamento da mensalidade e, se você enviar, o comprovante de pagamento.</p>
     <p><b>Para quê:</b> agendar aulas e reposições, organizar as turmas e avisar sobre as aulas. Não usamos os dados para publicidade e não os vendemos.</p>
     <p><b>Quem acessa:</b> as professoras e a administração da escola. Os dados ficam guardados na plataforma Google Firebase.</p>
     <p><b>Crianças:</b> ao cadastrar uma criança, você declara ser o responsável legal por ela e consente com o uso do nome dela para as finalidades acima.</p>
@@ -445,7 +449,43 @@ function renderAtividade() {
 // ===== ALUNOS: MENSALIDADE + FALTAS/REPOSIÇÃO (professora) =====
 const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
 const idMens = (uid, crianca, mes) => `${uid}__${slug(crianca)}__${mes}`;
-let dadosAl = [];
+let dadosAl = [], pgtoAtual = null, planoAtual = null, planosAdmin = {}, planosPai = {};
+const reais = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const idPlano = (uid, c) => `${uid}__${slug(c)}`;
+function infoMensal(plano, mes, m) {
+    const valor = Number(plano.valor ?? FINANCEIRO.valorPadrao) || 0;
+    const venc = `${mes}-${String(plano.vencimento || FINANCEIRO.vencimentoPadrao).padStart(2, '0')}`;
+    const st = statusMens(m), hoje = hojeISO();
+    const dias = st === 'pendente' && hoje > venc ? Math.round((new Date(hoje) - new Date(venc)) / 86400000) : 0;
+    return { valor, venc, dias };
+}
+const linhaFin = d => {
+    const { valor, venc, dias } = d.f, v = d.m?.valor || valor;
+    if (d.pago) return `<small>✅ Pago${d.m?.pago_em ? ' em ' + fmtData(d.m.pago_em) : ''}${d.m?.forma ? ' · ' + esc(d.m.forma) : ''}${v ? ' · ' + reais(v) : ''}</small>`;
+    if (!valor) return '<small style="color:#888;">💵 Valor não definido (toque em ⚙️ Plano)</small>';
+    return `<small>💵 ${reais(valor)} · vence ${fmtData(venc)}</small>${dias > 0 ? ` <span class="atraso">⚠️ Atrasado ${dias} dia(s)</span>` : ''}`;
+};
+function linkRecibo(d) {
+    const n = String(d.p.telefone || '').replace(/\D/g, '');
+    if (!n) return '';
+    const v = d.m?.valor || d.f.valor;
+    const msg = `🧾 Recibo - ${ESCOLA.nome}\nRecebemos a mensalidade de ${nomeMes(mesAl)} (${d.c})${v ? ' no valor de ' + reais(v) : ''}, paga em ${fmtData(d.m?.pago_em || hojeISO())}${d.m?.forma ? ' via ' + d.m.forma : ''}.\nObrigado! 🏊‍♂️`;
+    return `<a class="mini-btn" style="background:#25d366; text-decoration:none;" href="https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">🧾 Recibo</a>`;
+}
+function ouvirPlanos() {
+    unsubs.push(onSnapshot(collection(db, "planos"), snap => {
+        planosAdmin = {};
+        snap.docs.forEach(d => { planosAdmin[d.id] = d.data(); });
+        renderAlunos();
+    }, err => console.error(err)));
+}
+function ouvirPlanosPai() {
+    unsubs.push(onSnapshot(query(collection(db, "planos"), where("id_responsavel", "==", currentUserData.uid)), snap => {
+        planosPai = {};
+        snap.docs.forEach(d => { planosPai[d.id] = d.data(); });
+        renderPagamento();
+    }, err => console.error(err)));
+}
 function baixar(nome, texto, tipo) {
     const url = URL.createObjectURL(new Blob([texto], { type: tipo }));
     const a = document.createElement('a');
@@ -456,14 +496,15 @@ function baixar(nome, texto, tipo) {
 const csv = linhas => '\uFEFF' + linhas.map(l => l.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
 window.exportarCsv = () => {
     const rot = { pago: 'Pago', informado: 'Aguardando confirmação', pendente: 'Pendente' };
-    const linhas = [['Aluno', 'Responsável', 'Telefone', `Mensalidade ${nomeMes(mesAl)}`, 'Faltas', 'Reposições agendadas', 'A repor']]
-        .concat(dadosAl.map(d => [d.c, d.p.nome_responsavel, d.p.telefone, rot[d.st], d.fs.length, d.reps, d.saldo]));
+    const num = v => String(v || '').replace('.', ',');
+    const linhas = [['Aluno', 'Responsável', 'Telefone', `Mensalidade ${nomeMes(mesAl)}`, 'Valor (R$)', 'Vencimento', 'Pago em', 'Forma', 'Dias de atraso', 'Faltas', 'Reposições agendadas', 'A repor']]
+        .concat(dadosAl.map(d => [d.c, d.p.nome_responsavel, d.p.telefone, rot[d.st], num(d.m?.valor || d.f.valor), fmtData(d.f.venc), d.m?.pago_em ? fmtData(d.m.pago_em) : '', d.m?.forma || '', d.f.dias, d.fs.length, d.reps, d.saldo]));
     baixar(`alunos-${mesAl}.csv`, csv(linhas), 'text/csv;charset=utf-8');
 };
 window.exportarBackup = async function() {
     try {
         const out = { gerado_em: new Date().toISOString() };
-        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas', 'historico']) {
+        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas', 'historico', 'planos']) {
             const snap = await getDocs(collection(db, nome));
             out[nome] = snap.docs.map(d => { const x = { id: d.id, ...d.data() }; if (x.comprovante) x.comprovante = '[imagem omitida]'; return x; });
         }
@@ -494,10 +535,10 @@ function ouvirMensalidades() {
     }, err => { console.error(err); const el = $('lista-alunos-admin'); if (el) el.innerHTML = `<p class="card erro">Erro ao carregar mensalidades (${esc(err.code)}). Confira as regras do Firestore.</p>`; });
 }
 
-function linkCobranca(p, c) {
+function linkCobranca(p, c, f = {}) {
     const n = String(p.telefone || '').replace(/\D/g, '');
     if (!n) return '';
-    const msg = `Olá, ${p.nome_responsavel}! Passando para lembrar da mensalidade de ${nomeMes(mesAl)} de ${c}. Qualquer dúvida, estamos à disposição. 🏊‍♂️`;
+    const msg = `Olá, ${p.nome_responsavel}! Passando para lembrar da mensalidade de ${nomeMes(mesAl)} de ${c}${f.valor ? ` (${reais(f.valor)}, vencimento ${fmtData(f.venc)})` : ''}. ${f.dias > 0 ? 'Ela está em atraso. ' : ''}Qualquer dúvida, estamos à disposição. 🏊‍♂️`;
     return `<a class="mini-btn" style="background:#25d366; text-decoration:none;" href="https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">💬 Cobrar</a>`;
 }
 
@@ -508,35 +549,43 @@ function renderAlunos() {
     const dados = respAdmin.flatMap(p => (p.criancas?.length ? p.criancas : (p.nome_crianca ? [p.nome_crianca] : [])).map(c => {
         const fs = faltasAdmin.filter(f => f.id_responsavel === p.uid && f.nome_crianca === c).sort((x, y) => x.data.localeCompare(y.data));
         const reps = agsAdmin.filter(a => a.id_responsavel === p.uid && a.nome_crianca === c).length;
-        return { p, c, st: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]), m: mensAdmin[idMens(p.uid, c, mesAl)], pago: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]) === 'pago', fs, reps, saldo: Math.max(0, fs.length - reps) };
+        return { p, c, st: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]), m: mensAdmin[idMens(p.uid, c, mesAl)], f: infoMensal(planosAdmin[idPlano(p.uid, c)] || {}, mesAl, mensAdmin[idMens(p.uid, c, mesAl)]), pago: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]) === 'pago', fs, reps, saldo: Math.max(0, fs.length - reps) };
     })).sort((x, y) => x.c.localeCompare(y.c));
     const vistos = new Set(dados.map(d => idMens(d.p.uid, d.c, mesAl)));
     Object.entries(mensAdmin).forEach(([id, m]) => {
         if (vistos.has(id)) return;
         const p = respAdmin.find(r => r.uid === m.id_responsavel) || { uid: m.id_responsavel, nome_responsavel: 'Responsável (perfil não encontrado)', telefone: '' };
-        dados.push({ p, c: m.nome_crianca, st: statusMens(m), m, pago: statusMens(m) === 'pago', fs: [], reps: 0, saldo: 0 });
+        dados.push({ p, c: m.nome_crianca, st: statusMens(m), m, f: infoMensal(planosAdmin[idPlano(p.uid, m.nome_crianca)] || {}, mesAl, m), pago: statusMens(m) === 'pago', fs: [], reps: 0, saldo: 0 });
     });
     dados.sort((x, y) => x.c.localeCompare(y.c));
     dadosAl = dados;
     const pagos = dados.filter(d => d.pago).length;
     $('al-resumo').innerHTML = `✅ ${pagos} pagos · 🟡 ${dados.filter(d => d.st === 'informado').length} a confirmar · ⏳ ${dados.filter(d => d.st === 'pendente').length} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer · 📄 ${Object.keys(mensAdmin).length} registro(s) de pagamento neste mês`;
+    const esperado = dados.reduce((n, d) => n + d.f.valor, 0);
+    const recebido = dados.filter(d => d.pago).reduce((n, d) => n + (d.m?.valor || d.f.valor), 0);
+    const atrasado = dados.filter(d => d.f.dias > 0).reduce((n, d) => n + d.f.valor, 0);
+    const pct = esperado ? Math.min(100, Math.round(recebido / esperado * 100)) : 0;
+    $('fin-resumo').innerHTML = esperado || recebido
+        ? `<div class="fin-grid"><div><small>Esperado</small><b>${reais(esperado)}</b></div><div><small>Recebido</small><b style="color:#2a9d8f;">${reais(recebido)}</b></div><div><small>A receber</small><b>${reais(Math.max(0, esperado - recebido))}</b></div><div><small>Atrasado</small><b style="color:#c1121f;">${reais(atrasado)}</b></div></div><div class="barra"><i style="width:${pct}%"></i></div><p style="text-align:center; font-size:12px; margin-top:4px;">${pct}% recebido</p>`
+        : '<p style="text-align:center; font-size:13px; color:#666;">Defina o valor da mensalidade em ⚙️ Plano de cada aluno para ver o resumo financeiro.</p>';
     const nConf = dados.filter(d => d.st === 'informado').length;
     const abaAl = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
     if (abaAl) abaAl.dataset.badge = nConf || '';
     document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
-    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && d.st !== 'pago') || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'confirmar' && d.st === 'informado') || (filtroAl === 'repor' && d.saldo > 0));
+    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && d.st !== 'pago') || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'confirmar' && d.st === 'informado') || (filtroAl === 'atrasados' && d.f.dias > 0) || (filtroAl === 'repor' && d.saldo > 0));
     el.innerHTML = lista.length ? lista.map(d => {
         const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`;
         return `
-        <div class="class-card" style="border-left:6px solid ${d.pago ? '#2a9d8f' : '#ff9f1c'};">
+        <div class="class-card" style="border-left:6px solid ${d.pago ? '#2a9d8f' : d.f.dias > 0 ? '#c1121f' : '#ff9f1c'};">
             <p>🏊‍♂️ <b>${esc(d.c)}</b></p>
             <p><small>Resp: ${esc(d.p.nome_responsavel)} · 📞 ${esc(d.p.telefone || 'N/A')}</small></p>
+            <p style="margin-top:6px;">${linhaFin(d)}</p>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;">
                 ${d.st === 'informado'
                     ? `<button class="mini-btn" style="background:#2a9d8f;" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">✅ Confirmar pagamento</button><button class="mini-btn" style="background:#c1121f;" ${at} onclick="window.recusarPagamento(this.dataset.uid, this.dataset.nome)">↩ Recusar</button>`
                     : `<button class="mini-btn" style="background:${d.pago ? '#2a9d8f' : '#ff9f1c'};" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">${d.pago ? '✅ Pago' : '⏳ Pendente'}</button>`}
                 ${d.m?.comprovante ? `<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.verComprovante(this.dataset.uid, this.dataset.nome)">🧾 Comprovante</button>` : ''}
-                ${d.st === 'pendente' ? linkCobranca(d.p, d.c) : ''}
+                ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button>
             </div>
             <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
             <div>${d.fs.map(f => `<span class="chip-falta">${fmtData(f.data)} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`).join('')}</div>
@@ -556,11 +605,53 @@ window.mudarMesAl = delta => {
 };
 window.filtrarAlunos = f => { filtroAl = f; renderAlunos(); };
 window.alternarPagamento = async function(uid, crianca) {
-    const id = idMens(uid, crianca, mesAl), st = statusMens(mensAdmin[id]);
-    if (st === 'pago' && !confirm("Desmarcar este pagamento?")) return;
-    const novo = st === 'pago' ? 'pendente' : 'pago';
+    const id = idMens(uid, crianca, mesAl);
+    if (statusMens(mensAdmin[id]) !== 'pago') return abrirConfirmacao(uid, crianca);
+    if (!confirm("Desmarcar este pagamento?")) return;
     try {
-        await setDoc(doc(db, "mensalidades", id), { id_responsavel: uid, nome_crianca: crianca, mes: mesAl, status: novo, pago: novo === 'pago', atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || '' }, { merge: true });
+        await setDoc(doc(db, "mensalidades", id), { id_responsavel: uid, nome_crianca: crianca, mes: mesAl, status: 'pendente', pago: false, atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || '' }, { merge: true });
+    } catch (e) { alert("Erro ao salvar: " + (e.code || e.message)); }
+};
+function abrirConfirmacao(uid, crianca) {
+    pgtoAtual = { uid, crianca };
+    const f = infoMensal(planosAdmin[idPlano(uid, crianca)] || {}, mesAl, mensAdmin[idMens(uid, crianca, mesAl)]);
+    $('pgto-quem').textContent = `${crianca} · ${nomeMes(mesAl)}`;
+    $('pg-valor').value = f.valor ? String(f.valor).replace('.', ',') : '';
+    $('pg-data').value = hojeISO();
+    $('pg-forma').value = 'PIX';
+    $('modal-pgto').style.display = 'flex';
+}
+window.fecharModalPgto = () => { $('modal-pgto').style.display = 'none'; };
+window.confirmarPgto = async function() {
+    const { uid, crianca } = pgtoAtual;
+    try {
+        await setDoc(doc(db, "mensalidades", idMens(uid, crianca, mesAl)), {
+            id_responsavel: uid, nome_crianca: crianca, mes: mesAl, status: 'pago', pago: true,
+            valor: Number(String($('pg-valor').value).replace(',', '.')) || 0, pago_em: $('pg-data').value || hojeISO(), forma: $('pg-forma').value,
+            atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || ''
+        }, { merge: true });
+        window.fecharModalPgto();
+    } catch (e) { alert("Erro ao confirmar: " + (e.code || e.message)); }
+};
+window.abrirPlano = (uid, crianca) => {
+    planoAtual = { uid, crianca };
+    const pl = planosAdmin[idPlano(uid, crianca)] || {}, v = pl.valor ?? FINANCEIRO.valorPadrao;
+    $('pl-quem').textContent = crianca;
+    $('pl-valor').value = v ? String(v).replace('.', ',') : '';
+    $('pl-venc').value = pl.vencimento || FINANCEIRO.vencimentoPadrao;
+    $('pl-todos').checked = false;
+    $('modal-plano').style.display = 'flex';
+};
+window.fecharPlano = () => { $('modal-plano').style.display = 'none'; };
+window.salvarPlano = async function() {
+    const valor = Number(String($('pl-valor').value).replace(',', '.')) || 0;
+    const vencimento = Math.min(28, Math.max(1, parseInt($('pl-venc').value) || FINANCEIRO.vencimentoPadrao));
+    const alvos = $('pl-todos').checked ? dadosAl.map(d => ({ uid: d.p.uid, c: d.c })) : [{ uid: planoAtual.uid, c: planoAtual.crianca }];
+    try {
+        const lote = writeBatch(db);
+        alvos.forEach(a => lote.set(doc(db, "planos", idPlano(a.uid, a.c)), { id_responsavel: a.uid, nome_crianca: a.c, valor, vencimento, atualizado_em: Date.now() }, { merge: true }));
+        await lote.commit();
+        window.fecharPlano();
     } catch (e) { alert("Erro ao salvar: " + (e.code || e.message)); }
 };
 window.recusarPagamento = async function(uid, crianca) {
@@ -603,7 +694,7 @@ function renderPagamento() {
         : '<p style="text-align:center;">A chave PIX ainda não foi cadastrada. Fale com a escola.</p>';
     const criancas = currentUserData.criancas || [];
     el.innerHTML = criancas.length ? criancas.map(c => {
-        const m = mensPai[idMens(currentUserData.uid, c, mesPai)], st = statusMens(m), at = `data-nome="${esc(c)}"`;
+        const m = mensPai[idMens(currentUserData.uid, c, mesPai)], st = statusMens(m), f = infoMensal(planosPai[idPlano(currentUserData.uid, c)] || {}, mesPai, m), at = `data-nome="${esc(c)}"`;
         const corpo = st === 'pago' ? '<p style="color:#2a9d8f; font-weight:bold;">✅ Pago. Obrigado!</p>'
             : st === 'informado' ? '<p style="color:#b07d00; font-weight:bold;">🟡 Enviado. Aguardando a professora confirmar.</p>'
             : `${m?.recusado_em ? '<p class="erro" style="text-align:left; font-size:13px;">↩ O pagamento não foi confirmado. Envie o comprovante de novo ou fale com a escola.</p>' : '<p style="color:#c26a00; font-weight:bold;">⏳ Pendente</p>'}
@@ -611,7 +702,7 @@ function renderPagamento() {
                    <label class="mini-btn" style="background:var(--orange);">📎 Enviar comprovante<input type="file" accept="image/*" hidden ${at} onchange="window.enviarComprovante(this)"></label>
                    <button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.informarPagamento(this.dataset.nome)">Já paguei (sem anexo)</button>
                </div>`;
-        return `<div class="class-card"><p>🏊‍♂️ <b>${esc(c)}</b></p>${corpo}</div>`;
+        return `<div class="class-card"><p>🏊‍♂️ <b>${esc(c)}</b></p>${f.valor ? `<p><small>💵 ${reais(f.valor)} · vence ${fmtData(f.venc)}${f.dias > 0 ? ' <span class="atraso">⚠️ Atrasado ' + f.dias + ' dia(s)</span>' : ''}</small></p>` : ''}${corpo}</div>`;
     }).join('') : '<p style="text-align:center;">Cadastre um aluno na aba Perfil.</p>';
 }
 window.mudarMesPai = delta => {
@@ -1107,6 +1198,13 @@ button.chip-alu { cursor:pointer; }
 #fab.compacto .fab-rot { display:none; }
 #fab.escondido { transform:translateY(130px); opacity:0; pointer-events:none; }
 #admin-turmas, #admin-calendario { padding-bottom:76px; }
+.fin-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
+.fin-grid div { background:#f4fbfd; border-radius:12px; padding:10px; text-align:center; }
+.fin-grid small { display:block; color:#666; }
+.fin-grid b { font-size:16px; }
+.barra { height:10px; background:#e0e0e0; border-radius:6px; overflow:hidden; }
+.barra i { display:block; height:100%; background:linear-gradient(90deg,#2a9d8f,#00b4d8); }
+.atraso { background:#fde8ea; color:#c1121f; border-radius:10px; padding:2px 8px; font-size:12px; font-weight:bold; }
 </style>
 </head>
 <body>
@@ -1201,6 +1299,7 @@ button.chip-alu { cursor:pointer; }
                         <button type="button" onclick="window.mudarMesAl(1)">›</button>
                     </div>
                     <p id="al-resumo" style="text-align:center; font-size:14px; margin-bottom:10px;"></p>
+                    <div id="fin-resumo"></div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
                         <button type="button" class="mini-btn" style="background:#2a9d8f;" onclick="window.exportarCsv()">⬇️ Planilha do mês (CSV)</button>
                         <button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.exportarBackup()">💾 Backup completo</button>
@@ -1209,6 +1308,7 @@ button.chip-alu { cursor:pointer; }
                         <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
                         <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarAlunos('pendentes')">⏳ Pendentes</button>
                         <button type="button" class="chip" data-f="pagos" onclick="window.filtrarAlunos('pagos')">✅ Pagos</button>
+                        <button type="button" class="chip" data-f="atrasados" onclick="window.filtrarAlunos('atrasados')">⚠️ Atrasados</button>
                         <button type="button" class="chip" data-f="confirmar" onclick="window.filtrarAlunos('confirmar')">🟡 A confirmar</button>
                         <button type="button" class="chip" data-f="repor" onclick="window.filtrarAlunos('repor')">🔁 A repor</button>
                     </div>
@@ -1296,6 +1396,34 @@ button.chip-alu { cursor:pointer; }
 <button id="fab" type="button" onclick="window.fabAcao()" aria-label="Liberar nova turma"><span class="fab-ico">➕</span><span class="fab-rot" id="fab-rot">Nova turma</span></button>
 <div id="offline">📡 Sem internet. Suas ações serão enviadas quando a conexão voltar.</div>
 <div id="toast"></div>
+
+<div id="modal-pgto" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">✅ Confirmar pagamento</h2>
+        <p id="pgto-quem" style="margin-bottom:12px; color:#555; text-align:center;"></p>
+        <div class="form-group"><label>Valor recebido (R$)</label><input type="text" id="pg-valor" inputmode="decimal" placeholder="ex: 180,00"></div>
+        <div class="form-group"><label>Data do pagamento</label><input type="date" id="pg-data"></div>
+        <div class="form-group"><label>Forma de pagamento</label><select id="pg-forma"><option>PIX</option><option>Dinheiro</option><option>Cartão</option><option>Outro</option></select></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharModalPgto()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.confirmarPgto()">Confirmar</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-plano" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">⚙️ Plano do aluno</h2>
+        <p id="pl-quem" style="margin-bottom:12px; color:#555; text-align:center;"></p>
+        <div class="form-group"><label>Valor da mensalidade (R$)</label><input type="text" id="pl-valor" inputmode="decimal" placeholder="ex: 180,00"></div>
+        <div class="form-group"><label>Dia do vencimento (1 a 28)</label><input type="number" id="pl-venc" min="1" max="28"></div>
+        <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-bottom:10px;"><input type="checkbox" id="pl-todos" style="width:auto; margin-top:3px;"><span>Aplicar este valor e vencimento a <b>todos</b> os alunos</span></label>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharPlano()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.salvarPlano()">Salvar</button>
+        </div>
+    </div>
+</div>
 
 <div id="modal-comp" class="modal-overlay">
     <div class="modal-box" style="max-height:90vh; overflow:auto;">
