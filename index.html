@@ -179,6 +179,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // ===== ABAS =====
 function trocarAba(painel, secao, abaId) {
+    window.scrollTo({ top: 0 });
     document.querySelectorAll('.' + secao).forEach(el => el.style.display = 'none');
     $(abaId).style.display = 'block';
     document.querySelectorAll(`#${painel} .nav-tab`).forEach(el => el.classList.toggle('active', el.dataset.aba === abaId));
@@ -187,7 +188,9 @@ let abaAdmin = 'admin-turmas';
 window.mudarAbaAdmin = id => {
     const saindo = abaAdmin === 'admin-atividade' && id !== 'admin-atividade';
     abaAdmin = id;
-    $('fab').style.display = id === 'admin-nova' ? 'none' : 'flex';
+    $('fab').style.display = ['admin-turmas', 'admin-calendario'].includes(id) ? 'flex' : 'none';
+    $('fab').classList.remove('escondido');
+    atualizarFab();
     trocarAba('admin-panel', 'admin-section', id);
     if (saindo) marcarVistoAdmin(); // ao sair da aba, o que estava novo passa a ser "visto"
 };
@@ -338,9 +341,14 @@ const cartaoPassado = t => {
         <small style="color:#666;">Para marcar a presença, use a aba Histórico.</small>
     </div>`;
 };
-window.selecionarDia = iso => { diaSel = iso; renderCalendario(); };
+window.selecionarDia = iso => { diaSel = iso; renderCalendario(); atualizarFab(); };
 window.mudarMes = delta => { calRef = new Date(calRef.getFullYear(), calRef.getMonth() + delta, 1); renderCalendario(); };
 window.novaTurmaNoDia = iso => { window.novaTurma(); $('turma-data').value = iso; };
+function atualizarFab() {
+    const cal = abaAdmin === 'admin-calendario' && diaSel >= hojeISO();
+    $('fab-rot').textContent = cal ? `Turma em ${fmtData(diaSel).slice(0, 5)}` : 'Nova turma';
+}
+window.fabAcao = () => { if (abaAdmin === 'admin-calendario' && diaSel >= hojeISO()) window.novaTurmaNoDia(diaSel); else window.novaTurma(); };
 
 // ===== AVISO DE PRIVACIDADE (LGPD) =====
 const textoPrivacidade = () => `
@@ -917,6 +925,15 @@ window.salvarTelefone = async function() {
     } catch (e) { alert("Erro ao salvar telefone."); }
 };
 
+// ===== BOTÃO FLUTUANTE INTELIGENTE =====
+let ultimoY = 0;
+window.addEventListener('scroll', () => {
+    const y = window.scrollY, fab = $('fab');
+    fab.classList.toggle('escondido', y > ultimoY && y > 80);
+    fab.classList.toggle('compacto', y > 40);
+    ultimoY = y;
+}, { passive: true });
+
 // ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
 let ocupado = false;
 ['confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento'].forEach(nome => {
@@ -1084,6 +1101,12 @@ button.chip-alu { cursor:pointer; }
 .cal-dia.teve.sel { background:var(--primary); }
 .cal-ok { display:block; color:#2a9d8f; font-size:11px; font-weight:bold; margin-top:2px; }
 .cal-dia.sel .cal-ok { color:#fff; }
+#fab { width:auto; min-width:56px; height:56px; padding:0 18px; border-radius:28px; gap:8px; font-size:15px; font-weight:bold; transition:transform .25s, opacity .25s, padding .25s; }
+#fab .fab-ico { font-size:24px; line-height:1; }
+#fab.compacto { padding:0; width:56px; }
+#fab.compacto .fab-rot { display:none; }
+#fab.escondido { transform:translateY(130px); opacity:0; pointer-events:none; }
+#admin-turmas, #admin-calendario { padding-bottom:76px; }
 </style>
 </head>
 <body>
@@ -1270,7 +1293,7 @@ button.chip-alu { cursor:pointer; }
     </div>
 </div>
 
-<button id="fab" type="button" onclick="window.novaTurma()" aria-label="Liberar nova turma">➕</button>
+<button id="fab" type="button" onclick="window.fabAcao()" aria-label="Liberar nova turma"><span class="fab-ico">➕</span><span class="fab-rot" id="fab-rot">Nova turma</span></button>
 <div id="offline">📡 Sem internet. Suas ações serão enviadas quando a conexão voltar.</div>
 <div id="toast"></div>
 
