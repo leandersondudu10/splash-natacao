@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0077be">
 <title>SPLASH! Natação - Agendamento</title>
 <link rel="icon" href="logo.png">
 
@@ -54,6 +55,8 @@ window.addEventListener('pagehide', salvarVisita);
 // ===== SESSÃO =====
 onAuthStateChanged(auth, async (user) => {
     cancelarListeners();
+    document.body.classList.toggle('logado', !!user);
+    $('fab').style.display = 'none';
     if (!user) {
         $('login-screen').style.display = 'block';
         $('app-screen').style.display = 'none';
@@ -183,6 +186,7 @@ let abaAdmin = 'admin-turmas';
 window.mudarAbaAdmin = id => {
     const saindo = abaAdmin === 'admin-atividade' && id !== 'admin-atividade';
     abaAdmin = id;
+    $('fab').style.display = id === 'admin-nova' ? 'none' : 'flex';
     trocarAba('admin-panel', 'admin-section', id);
     if (saindo) marcarVistoAdmin(); // ao sair da aba, o que estava novo passa a ser "visto"
 };
@@ -209,6 +213,7 @@ function ouvirTurmas(alvoId, render) {
 
 function renderAdmin(el, turmas) {
     renderAdminLista(el, turmas);
+    resumoHoje(turmas);
     const passadas = turmas.filter(t => t.data < hojeISO()).length;
     if (passadas) el.insertAdjacentHTML('afterbegin', `<button class="btn-action" style="background:#888; margin:0 0 15px;" onclick="window.limparAntigas()">🧹 Limpar ${passadas} turma(s) encerrada(s)</button>`);
 }
@@ -243,12 +248,22 @@ window.verAlunosTurma = async function(turmaId, pref = 'alunos') {
         const snap = await getDocs(query(collection(db, "agendamentos"), where("id_turma", "==", turmaId)));
         box.innerHTML = snap.empty ? '<p>Nenhum aluno agendado nesta turma.</p>' : snap.docs.map(d => {
             const a = d.data();
-            return `<p>🏊‍♂️ <b>${esc(a.nome_crianca)}</b><br><small>Resp: ${esc(a.nome_responsavel || 'N/A')} - 📞 ${esc(a.telefone_responsavel || 'N/A')}</small></p><hr style="border:0; border-top:1px solid #ccc; margin:5px 0;">`;
+            return `<p>🏊‍♂️ <b>${esc(a.nome_crianca)}</b><br><small>Resp: ${esc(a.nome_responsavel || 'N/A')} - 📞 ${esc(a.telefone_responsavel || 'N/A')}</small> <button class="mini-btn" style="background:#c1121f; padding:3px 8px;" onclick="window.removerAgendamentoAdmin('${d.id}', '${turmaId}')">Remover</button></p><hr style="border:0; border-top:1px solid #ccc; margin:5px 0;">`;
         }).join('');
     } catch (err) {
         console.error(err);
         box.innerHTML = `<p style="color:red;">Erro ao carregar lista (${esc(err.code)}).</p>`;
     }
+};
+
+window.removerAgendamentoAdmin = async function(agId, turmaId) {
+    if (!confirm("Remover este aluno da aula? A vaga será liberada.")) return;
+    try {
+        const lote = writeBatch(db);
+        lote.delete(doc(db, "agendamentos", agId));
+        lote.update(doc(db, "turmas", turmaId), { vagas_ocupadas: increment(-1) });
+        await lote.commit();
+    } catch (e) { alert("Erro ao remover: " + (e.code || e.message)); }
 };
 
 async function apagarTurmaComAgendamentos(id) {
@@ -396,7 +411,7 @@ function renderAtividade() {
     const ehNovo = i => i.a.criado_em > vistoAdmin && i.professora === minha;
     const n = itens.filter(ehNovo).length;
     const aba = document.querySelector('#admin-panel .nav-tab[data-aba="admin-atividade"]');
-    if (aba) aba.textContent = n ? `🔔 Atividade 🆕 ${n}` : '🔔 Atividade';
+    if (aba) aba.dataset.badge = n || '';
     el.innerHTML = itens.length ? itens.slice(0, 40).map(i => `
         <div class="class-card" style="${ehNovo(i) ? 'border-left:6px solid var(--orange); background:#fff8ec;' : ''}">
             <p>${ehNovo(i) ? '<span class="tag-nova">🆕 NOVO</span><br>' : ''}🏊‍♂️ <b>${esc(i.a.nome_crianca)}</b> foi agendado(a)</p>
@@ -409,6 +424,31 @@ function renderAtividade() {
 // ===== ALUNOS: MENSALIDADE + FALTAS/REPOSIÇÃO (professora) =====
 const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
 const idMens = (uid, crianca, mes) => `${uid}__${slug(crianca)}__${mes}`;
+let dadosAl = [];
+function baixar(nome, texto, tipo) {
+    const url = URL.createObjectURL(new Blob([texto], { type: tipo }));
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+const csv = linhas => '\uFEFF' + linhas.map(l => l.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
+window.exportarCsv = () => {
+    const rot = { pago: 'Pago', informado: 'Aguardando confirmação', pendente: 'Pendente' };
+    const linhas = [['Aluno', 'Responsável', 'Telefone', `Mensalidade ${nomeMes(mesAl)}`, 'Faltas', 'Reposições agendadas', 'A repor']]
+        .concat(dadosAl.map(d => [d.c, d.p.nome_responsavel, d.p.telefone, rot[d.st], d.fs.length, d.reps, d.saldo]));
+    baixar(`alunos-${mesAl}.csv`, csv(linhas), 'text/csv;charset=utf-8');
+};
+window.exportarBackup = async function() {
+    try {
+        const out = { gerado_em: new Date().toISOString() };
+        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas']) {
+            const snap = await getDocs(collection(db, nome));
+            out[nome] = snap.docs.map(d => { const x = { id: d.id, ...d.data() }; if (x.comprovante) x.comprovante = '[imagem omitida]'; return x; });
+        }
+        baixar(`backup-splash-${hojeISO()}.json`, JSON.stringify(out, null, 2), 'application/json');
+    } catch (e) { alert("Erro ao gerar backup: " + (e.code || e.message)); }
+};
 const statusMens = m => m?.status || (m?.pago ? 'pago' : 'pendente');
 const nomeMes = m => `${MESES[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;
 
@@ -456,11 +496,12 @@ function renderAlunos() {
         dados.push({ p, c: m.nome_crianca, st: statusMens(m), m, pago: statusMens(m) === 'pago', fs: [], reps: 0, saldo: 0 });
     });
     dados.sort((x, y) => x.c.localeCompare(y.c));
+    dadosAl = dados;
     const pagos = dados.filter(d => d.pago).length;
     $('al-resumo').innerHTML = `✅ ${pagos} pagos · 🟡 ${dados.filter(d => d.st === 'informado').length} a confirmar · ⏳ ${dados.filter(d => d.st === 'pendente').length} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer · 📄 ${Object.keys(mensAdmin).length} registro(s) de pagamento neste mês`;
     const nConf = dados.filter(d => d.st === 'informado').length;
     const abaAl = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
-    if (abaAl) abaAl.textContent = nConf ? `💰 Alunos 🟡 ${nConf}` : '💰 Alunos';
+    if (abaAl) abaAl.dataset.badge = nConf || '';
     document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
     const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && d.st !== 'pago') || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'confirmar' && d.st === 'informado') || (filtroAl === 'repor' && d.saldo > 0));
     el.innerHTML = lista.length ? lista.map(d => {
@@ -591,6 +632,17 @@ window.informarPagamento = async function(crianca, arquivo) {
     } catch (e) { alert("Erro ao enviar: " + (e.code || e.message)); }
 };
 
+// ===== DESTAQUES PARA O CELULAR =====
+const cartaoDestaque = (titulo, grande, linha) => `<div class="card" style="background:linear-gradient(135deg,var(--primary),var(--secondary)); color:#fff;"><p style="opacity:.9; font-size:13px;">${titulo}</p><p style="font-size:20px; font-weight:bold;">${grande}</p><p style="font-size:14px;">${linha}</p></div>`;
+function resumoHoje(turmas) {
+    const h = turmas.filter(t => t.data === hojeISO());
+    $('resumo-hoje').innerHTML = h.length ? cartaoDestaque('📅 Hoje', `${h.length} aula(s) · ${h.reduce((n, t) => n + t.vagas_ocupadas, 0)} aluno(s)`, h.map(t => esc(t.horario)).join(' · ')) : '';
+}
+function bannerProxima(itens) {
+    const i = itens.find(x => x.ord && x.ord >= hojeISO());
+    return i ? cartaoDestaque('🏊 Próxima aula', esc(i.a.nome_crianca), esc(i.info)) : '';
+}
+
 // ===== EDITAR TURMA =====
 function resetarForm() {
     editandoId = null;
@@ -647,7 +699,7 @@ function renderPais(el, turmas) {
     turmas = turmas.filter(t => t.data >= hojeISO()); // esconde aulas que já passaram
     const novas = turmas.filter(t => t.criado_em > ultimaVisita && t.capacidade_maxima - t.vagas_ocupadas > 0).length;
     const aba = document.querySelector('#parent-panel .nav-tab[data-aba="pai-aulas"]');
-    if (aba) aba.textContent = novas ? `🏊‍♂️ Aulas 🆕 ${novas}` : '🏊‍♂️ Aulas';
+    if (aba) aba.dataset.badge = novas || '';
     if (!turmas.length) { el.innerHTML = '<p style="text-align:center; padding:20px;">Nenhuma aula cadastrada no momento.</p>'; return; }
     const abertas = turmas.filter(t => t.capacidade_maxima - t.vagas_ocupadas > 0);
     if (!abertas.length) { el.innerHTML = '<p style="text-align:center; padding:20px;">Todas as turmas estão com vagas esgotadas no momento!</p>'; return; }
@@ -727,9 +779,10 @@ function carregarMeusAgendamentos() {
             } catch (e) {}
             return { id: d.id, a, info, ord, prof, dh };
         }));
-        itens.sort((x, y) => x.ord.localeCompare(y.ord));
-        lista.innerHTML = itens.map(i => `
-            <div class="class-card" style="background:#e0f7fa; border-left:5px solid #00b4d8;">
+        const hoje = hojeISO();
+        itens.sort((x, y) => { const fx = x.ord >= hoje, fy = y.ord >= hoje; return fx !== fy ? (fx ? -1 : 1) : fx ? x.ord.localeCompare(y.ord) : y.ord.localeCompare(x.ord); });
+        lista.innerHTML = bannerProxima(itens) + itens.map(i => `
+            <div class="class-card" style="background:#e0f7fa; border-left:5px solid #00b4d8;${i.ord && i.ord < hojeISO() ? ' opacity:.6;' : ''}">
                 <p><b>Peixinho:</b> ${esc(i.a.nome_crianca)}</p>
                 <p><b>Data:</b> ${esc(i.info)}</p>
                 <p style="color:#0077be; margin-top:8px;"><i>✅ Vaga Confirmada</i></p>
@@ -802,6 +855,23 @@ window.salvarTelefone = async function() {
     } catch (e) { alert("Erro ao salvar telefone."); }
 };
 
+// ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
+let ocupado = false;
+['confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento'].forEach(nome => {
+    const original = window[nome];
+    window[nome] = async (...args) => {
+        if (ocupado) return;
+        ocupado = true;
+        try { return await original(...args); } finally { ocupado = false; }
+    };
+});
+
+// ===== AVISO DE FALTA DE INTERNET =====
+const atualizarRede = () => { $('offline').style.display = navigator.onLine ? 'none' : 'block'; };
+window.addEventListener('online', atualizarRede);
+window.addEventListener('offline', atualizarRede);
+atualizarRede();
+
 // ===== EFEITOS DE PISCINA =====
 (function () {
     const reduz = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -834,6 +904,7 @@ window.salvarTelefone = async function() {
         if (reduz) return;
         const alvo = e.target.closest('button, .nav-tab, .btn-wpp, .toggle-link, .cal-dia');
         if (!alvo) return;
+        navigator.vibrate?.(12);
         alvo.classList.remove('mergulho'); void alvo.offsetWidth; alvo.classList.add('mergulho');
         let x = e.clientX, y = e.clientY;
         if (!x && !y) { const r = alvo.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height / 2; }
@@ -911,6 +982,40 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
 .chip.on { background:var(--primary); color:#fff; }
 .chip-falta { display:inline-block; background:#ffe8cc; border-radius:12px; padding:3px 10px; font-size:12px; margin:3px 4px 0 0; }
 .chip-falta a { color:#c1121f; cursor:pointer; margin-left:4px; font-weight:bold; }
+#offline { display:none; position:fixed; top:0; left:0; right:0; background:#c1121f; color:#fff; text-align:center; padding:8px; font-size:13px; font-weight:bold; z-index:2500; }
+/* ===== MOBILE: barra inferior, toques maiores ===== */
+html { -webkit-text-size-adjust:100%; }
+button, a, .nav-tab, .cal-dia, .chip { touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+body.logado { padding-bottom:calc(104px + env(safe-area-inset-bottom)); }
+.nav-tabs { position:fixed; left:0; right:0; bottom:0; margin:0; gap:0; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); background:#fff; box-shadow:0 -4px 16px rgba(0,60,120,.16); border-radius:18px 18px 0 0; overflow:visible; z-index:900; }
+.nav-tab { flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:2px; background:transparent; color:#6b7c8f; padding:6px 2px; border-radius:12px; font-size:11px; position:relative; }
+.nav-tab .ico { font-size:22px; line-height:1; transition:transform .2s; }
+.nav-tab .rot { font-size:11px; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+.nav-tab.active { background:#e3f6fb; color:var(--primary); }
+.nav-tab.active .ico { transform:translateY(-2px) scale(1.15); }
+.nav-tab[data-badge]:not([data-badge=""])::after { content:attr(data-badge); position:absolute; top:0; right:calc(50% - 26px); background:#ef233c; color:#fff; border-radius:10px; min-width:18px; height:18px; line-height:18px; font-size:11px; font-weight:bold; text-align:center; padding:0 4px; }
+.btn-action { min-height:50px; }
+.mini-btn { padding:11px 16px; min-height:42px; font-size:14px; }
+.chip { padding:10px 15px; }
+.cal-head button { min-width:46px; min-height:46px; }
+.btn-logout { padding:10px 18px; }
+.form-group input, .form-group select { min-height:50px; }
+body.logado .header { padding:10px 14px; border-radius:0 0 22px 22px; }
+body.logado #logo-img { max-height:46px; padding:4px 12px; }
+body.logado #logo-texto span:first-child { font-size:20px !important; }
+body.logado .header > div:last-child { margin-top:8px !important; }
+#fab { display:none; position:fixed; right:16px; bottom:calc(88px + env(safe-area-inset-bottom)); width:58px; height:58px; border-radius:50%; border:none; background:var(--orange); color:#fff; font-size:28px; align-items:center; justify-content:center; box-shadow:0 6px 16px rgba(0,0,0,.25); cursor:pointer; z-index:800; }
+@keyframes subirsheet { from { transform:translateY(100%); } to { transform:none; } }
+@media (max-width:600px) {
+    .container { margin:16px auto; padding:0 12px; }
+    .card { padding:18px; }
+    .modal-overlay { align-items:flex-end; padding:0; }
+    .modal-box { max-width:none; border-radius:22px 22px 0 0; padding-bottom:calc(25px + env(safe-area-inset-bottom)); animation:subirsheet .3s ease; }
+}
+@media (min-width:700px) {
+    .nav-tabs { left:50%; right:auto; width:600px; transform:translateX(-50%); }
+    #fab { right:calc(50% - 292px); }
+}
 </style>
 </head>
 <body>
@@ -936,8 +1041,8 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
         <div id="login-box" class="card">
             <h2>Acesso ao Sistema</h2>
             <form id="form-login">
-                <div class="form-group"><label>Nome de Usuário</label><input type="text" id="login-user" required placeholder="ex: joaosilva"></div>
-                <div class="form-group"><label>Senha</label><input type="password" id="login-pass" required></div>
+                <div class="form-group"><label>Nome de Usuário</label><input type="text" id="login-user" required placeholder="ex: joaosilva" autocomplete="username" autocapitalize="none" maxlength="30"></div>
+                <div class="form-group"><label>Senha</label><input type="password" id="login-pass" required autocomplete="current-password"></div>
                 <button type="submit" class="btn-action">Entrar 🏊‍♂️</button>
                 <a class="toggle-link" id="show-register">É novo aqui? Criar conta!</a>
                 <a class="toggle-link" style="font-weight:normal; font-size:13px;" onclick="window.abrirPrivacidade()">Aviso de privacidade</a>
@@ -946,11 +1051,11 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
         <div id="register-box" class="card" style="display:none;">
             <h2>Cadastro de Responsável</h2>
             <form id="form-register">
-                <div class="form-group"><label>Seu Nome (Responsável)</label><input type="text" id="reg-nome" required></div>
-                <div class="form-group"><label>Telefone / WhatsApp</label><input type="tel" id="reg-telefone" required></div>
-                <div class="form-group"><label>Nome do Peixinho(a)</label><input type="text" id="reg-crianca" required placeholder="Primeiro aluno"></div>
-                <div class="form-group"><label>Nome de Usuário (Sem espaços)</label><input type="text" id="reg-user" required placeholder="ex: familiasilva"></div>
-                <div class="form-group"><label>Senha (Mínimo 6 caracteres)</label><input type="password" id="reg-pass" required minlength="6"></div>
+                <div class="form-group"><label>Seu Nome (Responsável)</label><input type="text" id="reg-nome" required maxlength="80" autocomplete="name"></div>
+                <div class="form-group"><label>Telefone / WhatsApp</label><input type="tel" id="reg-telefone" required maxlength="20" inputmode="tel" autocomplete="tel"></div>
+                <div class="form-group"><label>Nome do Peixinho(a)</label><input type="text" id="reg-crianca" required placeholder="Primeiro aluno" maxlength="60"></div>
+                <div class="form-group"><label>Nome de Usuário (Sem espaços)</label><input type="text" id="reg-user" required placeholder="ex: familiasilva" autocomplete="username" autocapitalize="none" maxlength="30"></div>
+                <div class="form-group"><label>Senha (Mínimo 6 caracteres)</label><input type="password" id="reg-pass" required minlength="6" autocomplete="new-password"></div>
                 <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin:5px 0;"><input type="checkbox" id="reg-aceite" required style="width:auto; margin-top:3px;"><span>Li e aceito o <a href="#" onclick="event.preventDefault(); window.abrirPrivacidade()">aviso de privacidade</a>, inclusive o uso dos dados da criança.</span></label>
                 <button type="submit" class="btn-action">Finalizar Cadastro</button>
                 <a class="toggle-link" id="show-login">Já tenho conta. Voltar ao Login!</a>
@@ -963,11 +1068,11 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
 
         <div id="admin-panel" style="display:none;">
             <div class="nav-tabs">
-                <div class="nav-tab active" data-aba="admin-turmas" onclick="window.mudarAbaAdmin('admin-turmas')">📅 Turmas Liberadas</div>
-                <div class="nav-tab" data-aba="admin-nova" onclick="window.novaTurma()">➕ Liberar Turma</div>
-                <div class="nav-tab" data-aba="admin-calendario" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</div>
-                <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')">🔔 Atividade</div>
-                <div class="nav-tab" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')">💰 Alunos</div>
+                <div class="nav-tab active" data-aba="admin-turmas" onclick="window.mudarAbaAdmin('admin-turmas')"><span class="ico">📅</span><span class="rot">Turmas</span></div>
+                <div class="nav-tab" data-aba="admin-nova" onclick="window.novaTurma()"><span class="ico">➕</span><span class="rot">Liberar</span></div>
+                <div class="nav-tab" data-aba="admin-calendario" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Calendário</span></div>
+                <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')"><span class="ico">🔔</span><span class="rot">Atividade</span></div>
+                <div class="nav-tab" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">💰</span><span class="rot">Alunos</span></div>
             </div>
             <div id="admin-nova" class="admin-section card" style="display:none;">
                 <h2 id="titulo-form-turma">Liberar Nova Turma</h2>
@@ -1005,6 +1110,10 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
                         <button type="button" onclick="window.mudarMesAl(1)">›</button>
                     </div>
                     <p id="al-resumo" style="text-align:center; font-size:14px; margin-bottom:10px;"></p>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                        <button type="button" class="mini-btn" style="background:#2a9d8f;" onclick="window.exportarCsv()">⬇️ Planilha do mês (CSV)</button>
+                        <button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.exportarBackup()">💾 Backup completo</button>
+                    </div>
                     <div class="chips">
                         <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
                         <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarAlunos('pendentes')">⏳ Pendentes</button>
@@ -1019,16 +1128,17 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
                 <div id="lista-atividade">Carregando...</div>
             </div>
             <div id="admin-turmas" class="admin-section">
+                <div id="resumo-hoje"></div>
                 <div id="lista-admin-turmas">Carregando turmas...</div>
             </div>
         </div>
 
         <div id="parent-panel" style="display:none;">
             <div class="nav-tabs">
-                <div class="nav-tab active" data-aba="pai-aulas" onclick="window.mudarAbaPai('pai-aulas')">🏊‍♂️ Aulas</div>
-                <div class="nav-tab" data-aba="pai-agendamentos" onclick="window.mudarAbaPai('pai-agendamentos')">📅 Agendados</div>
-                <div class="nav-tab" data-aba="pai-pagamento" onclick="window.mudarAbaPai('pai-pagamento')">💳 Pagamento</div>
-                <div class="nav-tab" data-aba="pai-perfil" onclick="window.mudarAbaPai('pai-perfil')">⚙️ Perfil</div>
+                <div class="nav-tab active" data-aba="pai-aulas" onclick="window.mudarAbaPai('pai-aulas')"><span class="ico">🏊‍♂️</span><span class="rot">Aulas</span></div>
+                <div class="nav-tab" data-aba="pai-agendamentos" onclick="window.mudarAbaPai('pai-agendamentos')"><span class="ico">📅</span><span class="rot">Agendados</span></div>
+                <div class="nav-tab" data-aba="pai-pagamento" onclick="window.mudarAbaPai('pai-pagamento')"><span class="ico">💳</span><span class="rot">Pagamento</span></div>
+                <div class="nav-tab" data-aba="pai-perfil" onclick="window.mudarAbaPai('pai-perfil')"><span class="ico">⚙️</span><span class="rot">Perfil</span></div>
             </div>
             <div id="pai-aulas" class="parent-section"><div id="lista-aulas-disponiveis">Buscando aulas...</div></div>
             <div id="pai-agendamentos" class="parent-section" style="display:none;"><div id="lista-meus-agendamentos">Buscando...</div></div>
@@ -1080,6 +1190,8 @@ body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:no
     </div>
 </div>
 
+<button id="fab" type="button" onclick="window.novaTurma()" aria-label="Liberar nova turma">➕</button>
+<div id="offline">📡 Sem internet. Suas ações serão enviadas quando a conexão voltar.</div>
 <div id="toast"></div>
 
 <div id="modal-comp" class="modal-overlay">
