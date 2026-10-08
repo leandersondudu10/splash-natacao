@@ -42,7 +42,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtData = d => d ? d.split('-').reverse().join('/') : '';
 const hojeISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-let editandoId = null, unsubMens = null, respAdmin = [], faltasAdmin = [], mensAdmin = {}, mesAl = hojeISO().slice(0, 7), filtroAl = 'todos', mesPai = hojeISO().slice(0, 7), mensPai = {};
+let editandoId = null, unsubMens = null, respAdmin = [], faltasAdmin = [], mensAdmin = {}, mesAl = hojeISO().slice(0, 7), filtroAl = 'todos', mesPai = hojeISO().slice(0, 7), mensPai = {}, histArq = [], mesHist = hojeISO().slice(0, 7), buscaHist = '';
 const cancelarListeners = () => { unsubs.forEach(u => u()); unsubs = []; if (unsubMens) { unsubMens(); unsubMens = null; } };
 
 // Última visita do responsável (para marcar turmas novas)
@@ -78,6 +78,7 @@ onAuthStateChanged(auth, async (user) => {
         vistoAdmin = lerVistoAdmin();
         ouvirAgendamentosAdmin();
         ouvirAlunosAdmin();
+        ouvirHistorico();
     } else {
         iniciarPai(user);
     }
@@ -214,12 +215,12 @@ function ouvirTurmas(alvoId, render) {
 function renderAdmin(el, turmas) {
     renderAdminLista(el, turmas);
     resumoHoje(turmas);
-    const passadas = turmas.filter(t => t.data < hojeISO()).length;
-    if (passadas) el.insertAdjacentHTML('afterbegin', `<button class="btn-action" style="background:#888; margin:0 0 15px;" onclick="window.limparAntigas()">🧹 Limpar ${passadas} turma(s) encerrada(s)</button>`);
+    arquivarPassadas(turmas);
 }
 function renderAdminLista(el, turmas) {
     turmasAdmin = turmas;
     renderCalendario();
+    renderHistorico();
     if (!turmas.length) { el.innerHTML = '<p class="card" style="text-align:center;">Nenhuma turma criada ainda.</p>'; return; }
     el.innerHTML = turmas.map(t => `
         <div class="class-card">
@@ -266,20 +267,21 @@ window.removerAgendamentoAdmin = async function(agId, turmaId) {
     } catch (e) { alert("Erro ao remover: " + (e.code || e.message)); }
 };
 
-async function apagarTurmaComAgendamentos(id) {
-    const ags = await getDocs(query(collection(db, "agendamentos"), where("id_turma", "==", id)));
-    await Promise.all(ags.docs.map(d => deleteDoc(d.ref)));
-    await deleteDoc(doc(db, "turmas", id));
-}
-window.limparAntigas = async function() {
-    const antigas = turmasAdmin.filter(t => t.data < hojeISO());
+let arquivando = false;
+// Passou a data da aula: ela vai sozinha para o histórico (os agendamentos ficam guardados)
+async function arquivarPassadas(turmas) {
+    if (arquivando) return;
+    const antigas = turmas.filter(t => t.data < hojeISO());
     if (!antigas.length) return;
-    if (!confirm(`Apagar ${antigas.length} turma(s) encerrada(s) e os agendamentos delas? Isso não pode ser desfeito.`)) return;
+    arquivando = true;
     try {
-        for (const t of antigas) await apagarTurmaComAgendamentos(t.id);
-        alert("Turmas antigas removidas.");
-    } catch (err) { alert("Erro ao limpar: " + (err.code || err.message)); }
-};
+        for (const t of antigas) {
+            await setDoc(doc(db, "historico", t.id), { data: t.data, horario: t.horario, nivel: t.nivel, professora: t.professora, capacidade_maxima: t.capacidade_maxima, arquivado_em: Date.now() });
+            await deleteDoc(doc(db, "turmas", t.id));
+        }
+    } catch (e) { console.error("Erro ao arquivar turmas antigas:", e); }
+    arquivando = false;
+}
 
 window.excluirTurma = async function(turmaId) {
     if (!confirm("Tem certeza que deseja cancelar e excluir esta aula? Os agendamentos dela também serão apagados.")) return;
@@ -304,17 +306,17 @@ function renderCalendario() {
     $('cal-titulo').textContent = `${MESES[m]} ${a}`;
     const vazios = new Date(a, m, 1).getDay(), total = new Date(a, m + 1, 0).getDate();
     const porDia = {};
-    turmasAdmin.forEach(t => (porDia[t.data] = porDia[t.data] || []).push(t));
+    turmasAdmin.concat(histArq.filter(h => !turmasAdmin.some(t => t.id === h.id))).forEach(t => (porDia[t.data] = porDia[t.data] || []).push(t));
     let html = ['D','S','T','Q','Q','S','S'].map(d => `<div class="cal-sem">${d}</div>`).join('') + '<div></div>'.repeat(vazios);
     for (let d = 1; d <= total; d++) {
         const iso = `${a}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const dots = (porDia[iso] || []).slice(0, 4).map(t => `<i style="background:${COR_PROF[t.professora] || '#888'}"></i>`).join('');
-        html += `<div class="cal-dia${iso === hojeISO() ? ' hoje' : ''}${iso === diaSel ? ' sel' : ''}" onclick="window.selecionarDia('${iso}')"><b>${d}</b><div class="cal-dots">${dots}</div></div>`;
+        html += `<div class="cal-dia${iso === hojeISO() ? ' hoje' : ''}${iso === diaSel ? ' sel' : ''}${iso < hojeISO() && porDia[iso] ? ' teve' : ''}" onclick="window.selecionarDia('${iso}')"><b>${d}</b><div class="cal-dots">${dots}</div>${iso < hojeISO() && porDia[iso] ? '<small class="cal-ok">✓ ' + porDia[iso].reduce((n, t) => n + alunosDe(t.id).length, 0) + '</small>' : ''}</div>`;
     }
     el.innerHTML = html;
     const ts = porDia[diaSel] || [];
     $('cal-dia-detalhe').innerHTML = `<h3 style="color:var(--dark); margin:15px 0 10px;">📅 ${fmtData(diaSel)}</h3>` +
-        (ts.length ? ts.map(t => `
+        (ts.length ? ts.map(t => t.data < hojeISO() ? cartaoPassado(t) : `
             <div class="class-card" style="border-left:6px solid ${COR_PROF[t.professora] || '#888'};">
                 <p><b>${esc(t.horario)}</b> · ${esc(t.nivel)} · ${esc(t.professora)}</p>
                 <p>${t.vagas_ocupadas} de ${t.capacidade_maxima} vagas ocupadas</p>
@@ -325,8 +327,17 @@ function renderCalendario() {
                 </div>
                 <div id="cal-alunos-${t.id}" style="display:none; margin-top:10px; padding:10px; background:#f0f9ff; border-radius:8px;"></div>
             </div>`).join('') : '<p style="color:#666;">Nenhuma turma neste dia.</p>') +
-        `<button class="btn-action" style="background:var(--secondary);" onclick="window.novaTurmaNoDia('${diaSel}')">➕ Liberar turma neste dia</button>`;
+        (diaSel < hojeISO() ? '' : `<button class="btn-action" style="background:var(--secondary);" onclick="window.novaTurmaNoDia('${diaSel}')">➕ Liberar turma neste dia</button>`);
 }
+const cartaoPassado = t => {
+    const al = alunosDe(t.id), veio = al.filter(a => a.presente === true).length;
+    return `<div class="class-card" style="border-left:6px solid ${COR_PROF[t.professora] || '#888'}; background:#f4fbf7;">
+        <p><b>${esc(t.horario)}</b> · ${esc(t.nivel)} · ${esc(t.professora)}</p>
+        <p><small>✓ Já aconteceu · 👥 ${al.length} agendado(s)${al.some(a => a.presente !== null) ? ` · ✅ ${veio} compareceu(ram)` : ''}</small></p>
+        <p><small>${al.length ? al.map(a => `${a.presente === true ? '✅' : a.presente === false ? '❌' : '⚪'} ${esc(a.nome)}`).join(' · ') : 'Ninguém agendado.'}</small></p>
+        <small style="color:#666;">Para marcar a presença, use a aba Histórico.</small>
+    </div>`;
+};
 window.selecionarDia = iso => { diaSel = iso; renderCalendario(); };
 window.mudarMes = delta => { calRef = new Date(calRef.getFullYear(), calRef.getMonth() + delta, 1); renderCalendario(); };
 window.novaTurmaNoDia = iso => { window.novaTurma(); $('turma-data').value = iso; };
@@ -335,7 +346,7 @@ window.novaTurmaNoDia = iso => { window.novaTurma(); $('turma-data').value = iso
 const textoPrivacidade = () => `
     <h2 style="color:var(--primary); font-size:20px;">🔒 Aviso de Privacidade</h2>
     <p><b>Quem cuida dos dados:</b> ${esc(ESCOLA.nome)}.</p>
-    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, as faltas, a situação da mensalidade (pago ou pendente) e, se você enviar, o comprovante de pagamento.</p>
+    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, a presença nas aulas, as faltas, a situação da mensalidade (pago ou pendente) e, se você enviar, o comprovante de pagamento.</p>
     <p><b>Para quê:</b> agendar aulas e reposições, organizar as turmas e avisar sobre as aulas. Não usamos os dados para publicidade e não os vendemos.</p>
     <p><b>Quem acessa:</b> as professoras e a administração da escola. Os dados ficam guardados na plataforma Google Firebase.</p>
     <p><b>Crianças:</b> ao cadastrar uma criança, você declara ser o responsável legal por ela e consente com o uso do nome dela para as finalidades acima.</p>
@@ -396,6 +407,8 @@ function ouvirAgendamentosAdmin() {
         primeira = false;
         renderAtividade();
         renderAlunos();
+        renderHistorico();
+        renderCalendario();
     }, (err) => {
         console.error(err);
         const el = $('lista-atividade');
@@ -442,7 +455,7 @@ window.exportarCsv = () => {
 window.exportarBackup = async function() {
     try {
         const out = { gerado_em: new Date().toISOString() };
-        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas']) {
+        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas', 'historico']) {
             const snap = await getDocs(collection(db, nome));
             out[nome] = snap.docs.map(d => { const x = { id: d.id, ...d.data() }; if (x.comprovante) x.comprovante = '[imagem omitida]'; return x; });
         }
@@ -632,6 +645,54 @@ window.informarPagamento = async function(crianca, arquivo) {
     } catch (e) { alert("Erro ao enviar: " + (e.code || e.message)); }
 };
 
+// ===== HISTÓRICO E CHAMADA (professora) =====
+function ouvirHistorico() {
+    unsubs.push(onSnapshot(collection(db, "historico"), snap => {
+        histArq = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderHistorico();
+        renderCalendario();
+    }, err => console.error(err)));
+}
+const alunosDe = id => agsAdmin.filter(a => a.id_turma === id).map(a => ({ ag: a.id, nome: a.nome_crianca, resp: a.nome_responsavel || '', presente: a.presente ?? null }));
+function itensHistorico() {
+    const hoje = hojeISO();
+    const vivos = turmasAdmin.filter(t => t.data <= hoje).map(t => ({ id: t.id, data: t.data, horario: t.horario, nivel: t.nivel, professora: t.professora, alunos: alunosDe(t.id) }));
+    const arq = histArq.filter(h => !vivos.some(v => v.id === h.id)).map(h => ({ ...h, alunos: h.alunos ?? alunosDe(h.id) }));
+    return vivos.concat(arq).sort((x, y) => `${y.data}${y.horario}`.localeCompare(`${x.data}${x.horario}`));
+}
+function renderHistorico() {
+    const el = $('lista-historico');
+    if (!el) return;
+    $('hist-mes').textContent = nomeMes(mesHist);
+    const q = slug(buscaHist.trim());
+    const itens = itensHistorico().filter(i => i.data?.startsWith(mesHist))
+        .filter(i => !q || i.alunos.some(a => slug(a.nome).includes(q) || slug(a.resp).includes(q)));
+    $('hist-resumo').textContent = `${itens.length} aula(s) · ${itens.reduce((n, i) => n + i.alunos.length, 0)} participação(ões)`;
+    el.innerHTML = itens.length ? itens.map(i => {
+        const marcados = i.alunos.filter(a => a.presente !== null), veio = i.alunos.filter(a => a.presente === true).length;
+        const chips = i.alunos.map(a => {
+            const ic = a.presente === true ? '✅' : a.presente === false ? '❌' : '⚪';
+            return a.ag ? `<button type="button" class="chip-alu" data-ag="${a.ag}" data-p="${a.presente ?? ''}" onclick="window.alternarPresenca(this)">${ic} ${esc(a.nome)}</button>` : `<span class="chip-alu">${ic} ${esc(a.nome)}</span>`;
+        }).join('');
+        return `<div class="class-card" style="border-left:6px solid ${COR_PROF[i.professora] || '#888'};">
+            <p><b>${fmtData(i.data)}</b> · ${esc(i.horario)} · ${esc(i.nivel)} · ${esc(i.professora)}</p>
+            <p><small>👥 ${i.alunos.length} agendado(s)${marcados.length ? ` · ✅ ${veio} compareceu(ram)` : ' · chamada não feita'}</small></p>
+            <div>${chips || '<small>Ninguém agendado.</small>'}</div>
+        </div>`;
+    }).join('') : '<p class="card" style="text-align:center;">Nenhuma aula encontrada neste mês.</p>';
+}
+window.mudarMesHist = delta => {
+    const [a, m] = mesHist.split('-').map(Number), d = new Date(a, m - 1 + delta, 1);
+    mesHist = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    renderHistorico();
+};
+window.buscarHistorico = v => { buscaHist = v; renderHistorico(); };
+window.alternarPresenca = async function(btn) {
+    const atual = btn.dataset.p, novo = atual === '' ? true : atual === 'true' ? false : null;
+    try { await updateDoc(doc(db, "agendamentos", btn.dataset.ag), { presente: novo }); }
+    catch (e) { alert("Erro ao salvar presença: " + (e.code || e.message)); }
+};
+
 // ===== DESTAQUES PARA O CELULAR =====
 const cartaoDestaque = (titulo, grande, linha) => `<div class="card" style="background:linear-gradient(135deg,var(--primary),var(--secondary)); color:#fff;"><p style="opacity:.9; font-size:13px;">${titulo}</p><p style="font-size:20px; font-weight:bold;">${grande}</p><p style="font-size:14px;">${linha}</p></div>`;
 function resumoHoje(turmas) {
@@ -770,7 +831,8 @@ function carregarMeusAgendamentos() {
             const a = d.data();
             let info = "Aula (turma removida)", ord = "", prof = "", dh = "";
             try {
-                const ts = await getDoc(doc(db, "turmas", a.id_turma));
+                let ts = await getDoc(doc(db, "turmas", a.id_turma));
+                if (!ts.exists()) ts = await getDoc(doc(db, "historico", a.id_turma));
                 if (ts.exists()) {
                     const t = ts.data();
                     info = `${fmtData(t.data)} às ${t.horario} - ${t.professora}`;
@@ -787,7 +849,7 @@ function carregarMeusAgendamentos() {
                 <p><b>Data:</b> ${esc(i.info)}</p>
                 <p style="color:#0077be; margin-top:8px;"><i>✅ Vaga Confirmada</i></p>
                 ${linkWhats(i.prof, i.a.nome_crianca, i.dh)}
-                <button onclick="window.cancelarAgendamento('${i.id}', '${i.a.id_turma}')" style="margin-top:10px; background:#ef233c; color:white; border:none; padding:6px 12px; border-radius:8px; cursor:pointer;">Cancelar vaga</button>
+                ${i.ord >= hojeISO() ? `<button onclick="window.cancelarAgendamento('${i.id}', '${i.a.id_turma}')" style="margin-top:10px; background:#ef233c; color:white; border:none; padding:6px 12px; border-radius:8px; cursor:pointer;">Cancelar vaga</button>` : ''}
             </div>`).join('');
     }, (err) => {
         console.error(err);
@@ -1016,6 +1078,12 @@ body.logado .header > div:last-child { margin-top:8px !important; }
     .nav-tabs { left:50%; right:auto; width:600px; transform:translateX(-50%); }
     #fab { right:calc(50% - 292px); }
 }
+.chip-alu { display:inline-block; font-family:inherit; background:#eef7fb; border:1px solid #cfe9f3; border-radius:14px; padding:7px 12px; font-size:14px; margin:4px 4px 0 0; color:#244; }
+button.chip-alu { cursor:pointer; }
+.cal-dia.teve { background:#e6f7ef; }
+.cal-dia.teve.sel { background:var(--primary); }
+.cal-ok { display:block; color:#2a9d8f; font-size:11px; font-weight:bold; margin-top:2px; }
+.cal-dia.sel .cal-ok { color:#fff; }
 </style>
 </head>
 <body>
@@ -1069,7 +1137,7 @@ body.logado .header > div:last-child { margin-top:8px !important; }
         <div id="admin-panel" style="display:none;">
             <div class="nav-tabs">
                 <div class="nav-tab active" data-aba="admin-turmas" onclick="window.mudarAbaAdmin('admin-turmas')"><span class="ico">📅</span><span class="rot">Turmas</span></div>
-                <div class="nav-tab" data-aba="admin-nova" onclick="window.novaTurma()"><span class="ico">➕</span><span class="rot">Liberar</span></div>
+                <div class="nav-tab" data-aba="admin-historico" onclick="window.mudarAbaAdmin('admin-historico')"><span class="ico">📜</span><span class="rot">Histórico</span></div>
                 <div class="nav-tab" data-aba="admin-calendario" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Calendário</span></div>
                 <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')"><span class="ico">🔔</span><span class="rot">Atividade</span></div>
                 <div class="nav-tab" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">💰</span><span class="rot">Alunos</span></div>
@@ -1099,7 +1167,7 @@ body.logado .header > div:last-child { margin-top:8px !important; }
                     <button type="button" onclick="window.mudarMes(1)">›</button>
                 </div>
                 <div id="cal-corpo"></div>
-                <p style="font-size:12px; color:#555; margin-top:10px;"><span style="color:#0077be">●</span> Tia Bruna &nbsp; <span style="color:#ff9f1c">●</span> Tia Auri</p>
+                <p style="font-size:12px; color:#555; margin-top:10px;"><span style="color:#0077be">●</span> Tia Bruna &nbsp; <span style="color:#ff9f1c">●</span> Tia Auri &nbsp; <span style="color:#2a9d8f; font-weight:bold;">✓ 3</span> já aconteceu (nº de alunos)</p>
                 <div id="cal-dia-detalhe"></div>
             </div>
             <div id="admin-alunos" class="admin-section" style="display:none;">
@@ -1123,6 +1191,18 @@ body.logado .header > div:last-child { margin-top:8px !important; }
                     </div>
                 </div>
                 <div id="lista-alunos-admin">Carregando...</div>
+            </div>
+            <div id="admin-historico" class="admin-section" style="display:none;">
+                <div class="card">
+                    <div class="cal-head">
+                        <button type="button" onclick="window.mudarMesHist(-1)">‹</button>
+                        <h2 id="hist-mes" style="margin:0; font-size:18px;"></h2>
+                        <button type="button" onclick="window.mudarMesHist(1)">›</button>
+                    </div>
+                    <input type="search" placeholder="🔍 Buscar aluno ou responsável" oninput="window.buscarHistorico(this.value)" style="width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px; margin:8px 0;">
+                    <p id="hist-resumo" style="text-align:center; font-size:14px;"></p>
+                </div>
+                <div id="lista-historico">Carregando...</div>
             </div>
             <div id="admin-atividade" class="admin-section" style="display:none;">
                 <div id="lista-atividade">Carregando...</div>
