@@ -10,7 +10,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { initializeFirestore, collection, addDoc, onSnapshot, query, where, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, sendPasswordResetEmail, updatePassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyAkeGLuL3vr_ITpU1nW7y18JdWYY9PGWNY",
@@ -26,9 +26,12 @@ const app = initializeApp(firebaseConfig);
 // Long polling automático: evita o "Carregando..." infinito em redes/navegadores que bloqueiam a conexão padrão
 const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
 const auth = getAuth(app);
+// Segundo app só para criar contas de responsáveis sem desconectar a professora
+const authSec = getAuth(initializeApp(firebaseConfig, 'cadastro'));
 
 const ADMINS = { 'bruna@splash.com': 'Tia Bruna', 'auri@splash.com': 'Tia Auri' };
 const RESERVADOS = ['bruna', 'auri'];
+const DONA = 'bruna@splash.com'; // só ela cria contas de responsáveis e cadastra alunos
 // Dados da escola usados no aviso de privacidade. Preencha o contato (WhatsApp ou e-mail) para pedidos sobre dados.
 const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625' };
 // PIX para a mensalidade. Preencha a chave (obrigatório), o tipo (CPF, CNPJ, Telefone, E-mail ou Aleatória) e, se quiser, o valor.
@@ -58,6 +61,7 @@ window.addEventListener('pagehide', salvarVisita);
 onAuthStateChanged(auth, async (user) => {
     cancelarListeners();
     document.body.classList.toggle('logado', !!user);
+    document.body.classList.toggle('dona', user?.email === DONA);
     $('fab').style.display = 'none';
     if (!user) {
         $('login-screen').style.display = 'block';
@@ -115,34 +119,12 @@ async function iniciarPai(user) {
 
 // ===== LOGIN / CADASTRO =====
 window.addEventListener('DOMContentLoaded', () => {
-    $('show-register').onclick = (e) => { e.preventDefault(); $('login-box').style.display = 'none'; $('register-box').style.display = 'block'; };
-    $('show-login').onclick = (e) => { e.preventDefault(); $('register-box').style.display = 'none'; $('login-box').style.display = 'block'; };
 
     $('form-login').onsubmit = (e) => {
         e.preventDefault();
         const usuario = $('login-user').value.trim().toLowerCase();
-        signInWithEmailAndPassword(auth, `${usuario}@splash.com`, $('login-pass').value)
+        signInWithEmailAndPassword(auth, usuario.includes('@') ? usuario : `${usuario}@splash.com`, $('login-pass').value)
             .catch(() => alert("Erro ao entrar. Verifique usuário e senha."));
-    };
-
-    $('form-register').onsubmit = async (e) => {
-        e.preventDefault();
-        const nome = $('reg-nome').value.trim(), telefone = $('reg-telefone').value.trim();
-        const usuario = $('reg-user').value.trim().toLowerCase(), pass = $('reg-pass').value;
-        if (usuario.includes(" ")) return alert("O nome de usuário não pode conter espaços.");
-        if (RESERVADOS.includes(usuario)) return alert("Esse nome de usuário é reservado. Escolha outro.");
-        registrando = true;
-        try {
-            if (!$('reg-aceite').checked) throw { code: 'sem-aceite' };
-            const cred = await createUserWithEmailAndPassword(auth, `${usuario}@splash.com`, pass);
-            await setDoc(doc(db, "responsaveis", cred.user.uid), { nome_responsavel: nome, telefone, usuario, criancas: [], nascimentos: {}, aceite_privacidade: true, aceite_em: Date.now() });
-            registrando = false;
-            await iniciarPai(cred.user);
-            alert("Conta criada! Bem-vindo(a) à família Splash!");
-        } catch (err) {
-            registrando = false;
-            alert(err.code === 'sem-aceite' ? "Para criar a conta, aceite o aviso de privacidade." : err.code === 'auth/email-already-in-use' ? "Esse nome de usuário já existe. Escolha outro." : "Erro do Firebase: " + (err.code || err.message));
-        }
     };
 
     $('btn-logout').onclick = () => signOut(auth);
@@ -588,7 +570,7 @@ function renderAlunos() {
                     ? `<button class="mini-btn" style="background:#2a9d8f;" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">✅ Confirmar pagamento</button><button class="mini-btn" style="background:#c1121f;" ${at} onclick="window.recusarPagamento(this.dataset.uid, this.dataset.nome)">↩ Recusar</button>`
                     : `<button class="mini-btn" style="background:${d.pago ? '#2a9d8f' : '#ff9f1c'};" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">${d.pago ? '✅ Pago' : '⏳ Pendente'}</button>`}
                 ${d.m?.comprovante ? `<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.verComprovante(this.dataset.uid, this.dataset.nome)">🧾 Comprovante</button>` : ''}
-                ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button><button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
+                ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button><button class="mini-btn so-dona" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
             </div>
             <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
             <div>${d.fs.map(f => `<span class="chip-falta">${fmtData(f.data)} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`).join('')}</div>
@@ -978,6 +960,60 @@ function bannerProxima(itens) {
     return i ? cartaoDestaque('🏊 Próxima aula', esc(i.a.nome_crianca), esc(i.info)) : '';
 }
 
+// ===== CADASTRO DE RESPONSÁVEIS (só a Tia Bruna) =====
+window.abrirCadastro = () => {
+    ['cd-nome', 'cd-tel', 'cd-email', 'cd-user', 'cd-crianca', 'cd-nasc'].forEach(id => { $(id).value = ''; });
+    $('cd-user').dataset.manual = '';
+    $('cd-senha').value = `splash${Math.floor(1000 + Math.random() * 9000)}`;
+    $('cd-resultado').innerHTML = '';
+    $('modal-cadastro').style.display = 'flex';
+};
+window.fecharCadastro = () => { $('modal-cadastro').style.display = 'none'; };
+window.sugerirUsuario = () => {
+    const u = $('cd-user');
+    if (!u.dataset.manual) u.value = slug($('cd-nome').value.trim().split(/\s+/).slice(0, 2).join(' ')).replace(/-/g, '');
+};
+window.salvarCadastro = async function() {
+    const nome = $('cd-nome').value.trim(), tel = $('cd-tel').value.trim(), email = $('cd-email').value.trim().toLowerCase();
+    const usuario = $('cd-user').value.trim().toLowerCase(), senha = $('cd-senha').value, crianca = $('cd-crianca').value.trim(), nasc = $('cd-nasc').value;
+    if (!nome || !crianca) return alert("Preencha o nome do responsável e o nome da criança.");
+    if (!email && (!usuario || /\s/.test(usuario))) return alert("Escolha um usuário sem espaços (ou informe o e-mail).");
+    if (RESERVADOS.includes(usuario)) return alert("Esse usuário é reservado. Escolha outro.");
+    if (senha.length < 6) return alert("A senha precisa ter pelo menos 6 caracteres.");
+    let cred;
+    try {
+        cred = await createUserWithEmailAndPassword(authSec, email || `${usuario}@splash.com`, senha);
+        await signOut(authSec);
+    } catch (e) {
+        return alert(e.code === 'auth/email-already-in-use' ? "Esse usuário/e-mail já existe. Escolha outro." : e.code === 'auth/invalid-email' ? "E-mail inválido." : "Erro ao criar o acesso: " + (e.code || e.message));
+    }
+    try {
+        await setDoc(doc(db, "responsaveis", cred.user.uid), { nome_responsavel: nome, telefone: tel, usuario: email ? '' : usuario, email, criancas: [crianca], nascimentos: nasc ? { [crianca]: nasc } : {}, aceite_privacidade: false, criado_em: Date.now(), criado_por: auth.currentUser.email });
+    } catch (e) {
+        return alert("O acesso foi criado, mas o perfil não foi salvo (" + (e.code || e.message) + "). Confira as regras do Firebase e use outro usuário para tentar de novo.");
+    }
+    const login = email || usuario, n = tel.replace(/\D/g, '');
+    const msg = `Olá, ${nome}! Seu acesso ao sistema da ${ESCOLA.nome}:\n🔗 ${location.href.split('#')[0]}\n👤 Usuário: ${login}\n🔑 Senha: ${senha}\nVocê pode trocar a senha na aba Perfil. 🏊‍♂️`;
+    const idade = idadeDe(nasc);
+    const sug = idade == null ? '<p style="font-size:13px; color:#888;">Sem data de nascimento, não há sugestão de turma.</p>' : (() => {
+        const l = gradeAdmin.filter(g => g.tipo !== 'individual' && compativel(g, idade) && g.dias.every(d => ocupDia(g, d) < g.capacidade));
+        return l.length ? `<p style="font-size:13px; margin:8px 0 4px;"><b>Turmas compatíveis com ${idade} anos e com vaga:</b></p>` + l.map(g => `<button type="button" class="chip" style="margin:3px 4px 3px 0;" data-uid="${esc(cred.user.uid)}" data-nome="${esc(crianca)}" onclick="window.incluirRapido('${g.id}', this)">${nomeDias(g.dias)} ${g.horario} · ${esc(g.nome || TIPOS[g.tipo])}</button>`).join('') : '<p style="font-size:13px; color:#888;">Nenhuma turma de grupo com vaga para essa idade.</p>';
+    })();
+    $('cd-resultado').innerHTML = `<div class="card" style="background:#e8f8f1; margin-top:12px;"><p style="color:#2a9d8f; font-weight:bold;">✅ Cadastro criado!</p><p>👤 <b>${esc(login)}</b></p><p>🔑 <b>${esc(senha)}</b></p><small>Anote ou envie agora: a senha não fica guardada no sistema.</small>${n ? `<a class="btn-wpp" href="https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">💬 Enviar acesso pelo WhatsApp</a>` : ''}${sug}</div>`;
+};
+window.esqueciSenha = async () => {
+    const e = $('login-user').value.trim().toLowerCase();
+    if (!e.includes('@')) return alert("Para recuperar a senha, fale com a escola (Tia Bruna).");
+    try { await sendPasswordResetEmail(auth, e); alert("Enviamos um e-mail para você criar uma nova senha."); }
+    catch (err) { alert("Não foi possível enviar o e-mail. Fale com a escola."); }
+};
+window.trocarSenha = async function() {
+    const nova = $('nova-senha').value;
+    if (nova.length < 6) return alert("A senha precisa ter pelo menos 6 caracteres.");
+    try { await updatePassword(auth.currentUser, nova); $('nova-senha').value = ''; alert("Senha alterada!"); }
+    catch (e) { alert(e.code === 'auth/requires-recent-login' ? "Por segurança, saia e entre de novo para trocar a senha." : "Erro ao trocar a senha: " + (e.code || e.message)); }
+};
+
 // ===== EDITAR TURMA =====
 function resetarForm() {
     editandoId = null;
@@ -1179,7 +1215,7 @@ window.addEventListener('scroll', () => {
 
 // ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
 let ocupado = false;
-['confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
+['salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
     const original = window[nome];
     window[nome] = async (...args) => {
         if (ocupado) return;
@@ -1360,6 +1396,8 @@ button.chip-alu { cursor:pointer; }
 .grupo-dias { color:var(--dark); margin:16px 0 8px; font-size:16px; }
 .sel-prof { width:100%; padding:10px; border:2px solid #e0e0e0; border-radius:10px; font-size:14px; margin:6px 0 8px; background:#fff; }
 .dia-ck { display:inline-flex; gap:6px; align-items:center; margin-right:14px; font-size:16px; }
+.so-dona { display:none !important; }
+body.dona .so-dona { display:inline-block !important; }
 </style>
 </head>
 <body>
@@ -1385,25 +1423,15 @@ button.chip-alu { cursor:pointer; }
         <div id="login-box" class="card">
             <h2>Acesso ao Sistema</h2>
             <form id="form-login">
-                <div class="form-group"><label>Nome de Usuário</label><input type="text" id="login-user" required placeholder="ex: joaosilva" autocomplete="username" autocapitalize="none" maxlength="30"></div>
+                <div class="form-group"><label>Usuário ou e-mail</label><input type="text" id="login-user" required placeholder="usuário ou e-mail" autocomplete="username" autocapitalize="none" maxlength="80"></div>
                 <div class="form-group"><label>Senha</label><input type="password" id="login-pass" required autocomplete="current-password"></div>
                 <button type="submit" class="btn-action">Entrar 🏊‍♂️</button>
-                <a class="toggle-link" id="show-register">É novo aqui? Criar conta!</a>
+                <p style="text-align:center; font-size:13px; color:#666; margin-top:12px;">Ainda não tem acesso? Fale com a escola para fazer o seu cadastro.</p>
+                <a class="toggle-link" style="font-weight:normal; font-size:13px;" onclick="window.esqueciSenha()">Esqueci minha senha</a>
                 <a class="toggle-link" style="font-weight:normal; font-size:13px;" onclick="window.abrirPrivacidade()">Aviso de privacidade</a>
             </form>
         </div>
-        <div id="register-box" class="card" style="display:none;">
-            <h2>Cadastro de Responsável</h2>
-            <form id="form-register">
-                <div class="form-group"><label>Seu Nome (Responsável)</label><input type="text" id="reg-nome" required maxlength="80" autocomplete="name"></div>
-                <div class="form-group"><label>Telefone / WhatsApp</label><input type="tel" id="reg-telefone" required maxlength="20" inputmode="tel" autocomplete="tel"></div>
-                <div class="form-group"><label>Nome de Usuário (Sem espaços)</label><input type="text" id="reg-user" required placeholder="ex: familiasilva" autocomplete="username" autocapitalize="none" maxlength="30"></div>
-                <div class="form-group"><label>Senha (Mínimo 6 caracteres)</label><input type="password" id="reg-pass" required minlength="6" autocomplete="new-password"></div>
-                <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin:5px 0;"><input type="checkbox" id="reg-aceite" required style="width:auto; margin-top:3px;"><span>Li e aceito o <a href="#" onclick="event.preventDefault(); window.abrirPrivacidade()">aviso de privacidade</a>, inclusive o uso dos dados da criança.</span></label>
-                <button type="submit" class="btn-action">Finalizar Cadastro</button>
-                <a class="toggle-link" id="show-login">Já tenho conta. Voltar ao Login!</a>
-            </form>
-        </div>
+        
     </div>
 
     <div id="app-screen" style="display:none;">
@@ -1455,7 +1483,8 @@ button.chip-alu { cursor:pointer; }
                     <p id="al-resumo" style="text-align:center; font-size:14px; margin-bottom:10px;"></p>
                     <div id="fin-resumo"></div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-                        <button type="button" class="mini-btn" style="background:var(--orange);" onclick="window.abrirAluno()">➕ Novo aluno</button>
+                        <button type="button" class="mini-btn so-dona" style="background:var(--orange);" onclick="window.abrirCadastro()">➕ Novo cadastro</button>
+                        <button type="button" class="mini-btn so-dona" style="background:#e08600;" onclick="window.abrirAluno()">➕ Novo aluno</button>
                         <button type="button" class="mini-btn" style="background:#2a9d8f;" onclick="window.exportarCsv()">⬇️ Planilha do mês (CSV)</button>
                         <button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.exportarBackup()">💾 Backup completo</button>
                     </div>
@@ -1530,6 +1559,12 @@ button.chip-alu { cursor:pointer; }
                 <h3 style="color:var(--dark); font-size:18px; margin-bottom:15px;">Meus Peixinhos (Alunos)</h3>
                 <div id="lista-filhos"></div>
                 <p style="font-size:13px; color:#666; margin-top:15px;">Para incluir ou alterar alunos, fale com a escola.</p>
+                    <hr style="margin:20px 0; border:0; border-top:1px solid #eee;">
+                    <h3 style="color:var(--dark); font-size:18px; margin-bottom:10px;">🔒 Trocar senha</h3>
+                    <div style="display:flex; gap:10px;">
+                        <input type="password" id="nova-senha" placeholder="Nova senha (mín. 6)" autocomplete="new-password" style="flex:1; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px;">
+                        <button type="button" onclick="window.trocarSenha()" style="background:var(--primary); color:#fff; border:none; padding:0 15px; border-radius:10px; cursor:pointer;">Salvar</button>
+                    </div>
             </div>
         </div>
     </div>
@@ -1553,6 +1588,25 @@ button.chip-alu { cursor:pointer; }
 <button id="fab" type="button" onclick="window.fabAcao()" aria-label="Liberar nova turma"><span class="fab-ico">➕</span><span class="fab-rot" id="fab-rot">Nova reposição</span></button>
 <div id="offline">📡 Sem internet. Suas ações serão enviadas quando a conexão voltar.</div>
 <div id="toast"></div>
+
+<div id="modal-cadastro" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <h2 style="color:var(--primary);">➕ Novo cadastro</h2>
+        <p style="font-size:13px; color:#666; margin-bottom:10px;">Cria o acesso do responsável e já cadastra o aluno.</p>
+        <div class="form-group"><label>Nome do responsável</label><input type="text" id="cd-nome" maxlength="80" oninput="window.sugerirUsuario()"></div>
+        <div class="form-group"><label>Telefone / WhatsApp</label><input type="tel" id="cd-tel" maxlength="20" inputmode="tel"></div>
+        <div class="form-group"><label>E-mail (opcional — permite recuperar a senha)</label><input type="email" id="cd-email" maxlength="80" autocapitalize="none"></div>
+        <div class="form-group"><label>Usuário (usado se não houver e-mail)</label><input type="text" id="cd-user" maxlength="30" autocapitalize="none" oninput="this.dataset.manual='1'"></div>
+        <div class="form-group"><label>Senha inicial</label><input type="text" id="cd-senha" maxlength="30" autocapitalize="none"></div>
+        <div class="form-group"><label>Nome da criança</label><input type="text" id="cd-crianca" maxlength="60"></div>
+        <div class="form-group"><label>Data de nascimento</label><input type="date" id="cd-nasc"></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharCadastro()">Fechar</button>
+            <button type="button" class="btn-action" onclick="window.salvarCadastro()">Cadastrar</button>
+        </div>
+        <div id="cd-resultado"></div>
+    </div>
+</div>
 
 <div id="modal-mat" class="modal-overlay">
     <div class="modal-box" style="text-align:left;">
@@ -1645,5 +1699,6 @@ button.chip-alu { cursor:pointer; }
         <button class="btn-action" style="background:#888;" onclick="window.fecharAviso()">Fechar</button>
     </div>
 </div>
+
 </body>
 </html>
