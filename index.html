@@ -775,14 +775,25 @@ const idadeDe = nasc => {
 const compativel = (g, idade) => idade == null || ((g.idade_min == null || idade >= g.idade_min) && (g.idade_max == null || idade <= g.idade_max));
 const ocupDia = (g, d) => matAdmin.filter(m => m.id_turma === g.id && m.dias.includes(d)).length;
 
+let semeando = false;
+// Primeira vez que uma professora entra e a grade ainda não existe no banco: cria as turmas sozinho
+async function semearGrade() {
+    try {
+        const lote = writeBatch(db);
+        GRADE_PADRAO.forEach(g => lote.set(doc(db, "grade", idGrade(g)), g));
+        await lote.commit();
+        toast('📌 Grade da escola criada automaticamente!');
+    } catch (e) { console.error("Erro ao criar a grade:", e); semeando = false; }
+}
+
 function ouvirGrade() {
-    unsubs.push(onSnapshot(collection(db, "grade"), snap => { gradeAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(porHorario); renderGrade(); renderCalendario(); }, err => console.error(err)));
+    unsubs.push(onSnapshot(collection(db, "grade"), snap => { if (snap.empty && !snap.metadata.fromCache && !semeando) { semeando = true; semearGrade(); } gradeAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(porHorario); renderGrade(); renderCalendario(); }, err => console.error(err)));
     unsubs.push(onSnapshot(collection(db, "matriculas"), snap => { matAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderGrade(); renderCalendario(); }, err => console.error(err)));
 }
 function renderGrade() {
     const el = $('lista-grade');
     if (!el) return;
-    if (!gradeAdmin.length) { el.innerHTML = '<div class="card" style="text-align:center;"><p style="margin-bottom:8px;">Nenhuma turma fixa cadastrada ainda.</p><button class="btn-action" onclick="window.importarGrade()">📥 Importar grade da escola</button></div>'; return; }
+    if (!gradeAdmin.length) { el.innerHTML = '<div class="card" style="text-align:center;"><p style="margin-bottom:8px;">Criando a grade da escola...</p><button class="btn-action" onclick="window.importarGrade()">📥 Importar grade da escola</button></div>'; return; }
     let html = '', atual = '';
     gradeAdmin.forEach(g => {
         const chave = g.dias.join('');
