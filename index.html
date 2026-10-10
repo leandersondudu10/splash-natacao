@@ -82,6 +82,7 @@ onAuthStateChanged(auth, async (user) => {
         ouvirAlunosAdmin();
         ouvirHistorico();
         ouvirPlanos();
+        ouvirGrade();
     } else {
         iniciarPai(user);
     }
@@ -107,6 +108,7 @@ async function iniciarPai(user) {
     ouvirTurmas('lista-aulas-disponiveis', renderPais);
     ouvirPagamentosPai();
     ouvirPlanosPai();
+    ouvirFixasPai();
     carregarMeusAgendamentos();
     renderizarPerfil();
 }
@@ -125,7 +127,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     $('form-register').onsubmit = async (e) => {
         e.preventDefault();
-        const nome = $('reg-nome').value.trim(), telefone = $('reg-telefone').value.trim(), crianca = $('reg-crianca').value.trim();
+        const nome = $('reg-nome').value.trim(), telefone = $('reg-telefone').value.trim();
         const usuario = $('reg-user').value.trim().toLowerCase(), pass = $('reg-pass').value;
         if (usuario.includes(" ")) return alert("O nome de usuário não pode conter espaços.");
         if (RESERVADOS.includes(usuario)) return alert("Esse nome de usuário é reservado. Escolha outro.");
@@ -133,7 +135,7 @@ window.addEventListener('DOMContentLoaded', () => {
         try {
             if (!$('reg-aceite').checked) throw { code: 'sem-aceite' };
             const cred = await createUserWithEmailAndPassword(auth, `${usuario}@splash.com`, pass);
-            await setDoc(doc(db, "responsaveis", cred.user.uid), { nome_responsavel: nome, telefone, usuario, criancas: [crianca], aceite_privacidade: true, aceite_em: Date.now() });
+            await setDoc(doc(db, "responsaveis", cred.user.uid), { nome_responsavel: nome, telefone, usuario, criancas: [], nascimentos: {}, aceite_privacidade: true, aceite_em: Date.now() });
             registrando = false;
             await iniciarPai(cred.user);
             alert("Conta criada! Bem-vindo(a) à família Splash!");
@@ -322,7 +324,7 @@ function renderCalendario() {
     }
     el.innerHTML = html;
     const ts = porDia[diaSel] || [];
-    $('cal-dia-detalhe').innerHTML = `<h3 style="color:var(--dark); margin:15px 0 10px;">📅 ${fmtData(diaSel)}</h3>` +
+    $('cal-dia-detalhe').innerHTML = `<h3 style="color:var(--dark); margin:15px 0 10px;">📅 ${fmtData(diaSel)}</h3>` + fixasDoDia(diaSel) +
         (ts.length ? ts.map(t => t.data < hojeISO() ? cartaoPassado(t) : `
             <div class="class-card" style="border-left:6px solid ${COR_PROF[t.professora] || '#888'};">
                 <p><b>${esc(t.horario)}</b> · ${esc(t.nivel)} · ${esc(t.professora)}</p>
@@ -350,7 +352,7 @@ window.mudarMes = delta => { calRef = new Date(calRef.getFullYear(), calRef.getM
 window.novaTurmaNoDia = iso => { window.novaTurma(); $('turma-data').value = iso; };
 function atualizarFab() {
     const cal = abaAdmin === 'admin-calendario' && diaSel >= hojeISO();
-    $('fab-rot').textContent = cal ? `Turma em ${fmtData(diaSel).slice(0, 5)}` : 'Nova turma';
+    $('fab-rot').textContent = cal ? `Reposição em ${fmtData(diaSel).slice(0, 5)}` : 'Nova reposição';
 }
 window.fabAcao = () => { if (abaAdmin === 'admin-calendario' && diaSel >= hojeISO()) window.novaTurmaNoDia(diaSel); else window.novaTurma(); };
 
@@ -358,10 +360,10 @@ window.fabAcao = () => { if (abaAdmin === 'admin-calendario' && diaSel >= hojeIS
 const textoPrivacidade = () => `
     <h2 style="color:var(--primary); font-size:20px;">🔒 Aviso de Privacidade</h2>
     <p><b>Quem cuida dos dados:</b> ${esc(ESCOLA.nome)}.</p>
-    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome da(s) criança(s), os agendamentos de aulas, a presença nas aulas, as faltas, a situação, o valor e a data de pagamento da mensalidade e, se você enviar, o comprovante de pagamento.</p>
+    <p><b>Quais dados coletamos:</b> nome do responsável, telefone/WhatsApp, nome de usuário, nome e data de nascimento da(s) criança(s) (cadastradas pela escola), os agendamentos de aulas, a presença nas aulas, as faltas, a situação, o valor e a data de pagamento da mensalidade e, se você enviar, o comprovante de pagamento.</p>
     <p><b>Para quê:</b> agendar aulas e reposições, organizar as turmas e avisar sobre as aulas. Não usamos os dados para publicidade e não os vendemos.</p>
     <p><b>Quem acessa:</b> as professoras e a administração da escola. Os dados ficam guardados na plataforma Google Firebase.</p>
-    <p><b>Crianças:</b> ao cadastrar uma criança, você declara ser o responsável legal por ela e consente com o uso do nome dela para as finalidades acima.</p>
+    <p><b>Crianças:</b> a escola cadastra o aluno a seu pedido. Ao aceitar este aviso, você declara ser o responsável legal pela criança e consente com o uso dos dados dela para as finalidades acima.</p>
     <p><b>Por quanto tempo:</b> enquanto você usar o sistema ou até pedir a exclusão.</p>
     <p><b>Seus direitos:</b> você pode pedir acesso, correção ou exclusão dos seus dados e dos da criança a qualquer momento, falando com a escola${ESCOLA.contato ? ' em ' + esc(ESCOLA.contato) : ''}.</p>`;
 window.abrirPrivacidade = function(modo = 'leitura') {
@@ -504,7 +506,7 @@ window.exportarCsv = () => {
 window.exportarBackup = async function() {
     try {
         const out = { gerado_em: new Date().toISOString() };
-        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas', 'historico', 'planos']) {
+        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas', 'historico', 'planos', 'grade', 'matriculas']) {
             const snap = await getDocs(collection(db, nome));
             out[nome] = snap.docs.map(d => { const x = { id: d.id, ...d.data() }; if (x.comprovante) x.comprovante = '[imagem omitida]'; return x; });
         }
@@ -580,12 +582,13 @@ function renderAlunos() {
             <p>🏊‍♂️ <b>${esc(d.c)}</b></p>
             <p><small>Resp: ${esc(d.p.nome_responsavel)} · 📞 ${esc(d.p.telefone || 'N/A')}</small></p>
             <p style="margin-top:6px;">${linhaFin(d)}</p>
+            <p><small>🎂 ${d.p.nascimentos?.[d.c] ? fmtData(d.p.nascimentos[d.c]) + ' (' + idadeDe(d.p.nascimentos[d.c]) + ' anos)' : 'sem data de nascimento'}</small></p>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;">
                 ${d.st === 'informado'
                     ? `<button class="mini-btn" style="background:#2a9d8f;" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">✅ Confirmar pagamento</button><button class="mini-btn" style="background:#c1121f;" ${at} onclick="window.recusarPagamento(this.dataset.uid, this.dataset.nome)">↩ Recusar</button>`
                     : `<button class="mini-btn" style="background:${d.pago ? '#2a9d8f' : '#ff9f1c'};" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">${d.pago ? '✅ Pago' : '⏳ Pendente'}</button>`}
                 ${d.m?.comprovante ? `<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.verComprovante(this.dataset.uid, this.dataset.nome)">🧾 Comprovante</button>` : ''}
-                ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button>
+                ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button><button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
             </div>
             <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
             <div>${d.fs.map(f => `<span class="chip-falta">${fmtData(f.data)} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`).join('')}</div>
@@ -744,6 +747,167 @@ window.informarPagamento = async function(crianca, arquivo) {
     } catch (e) { alert("Erro ao enviar: " + (e.code || e.message)); }
 };
 
+// ===== TURMAS FIXAS (grade semanal) =====
+const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const TIPOS = { grupo: 'Grupo', individual: 'Individual', hidro: 'Hidroginástica' };
+const GRUPOS_DIAS = { '13': 'Segunda e Quarta', '24': 'Terça e Quinta', '5': 'Sexta' };
+const G = (dias, horario, tipo, capacidade, idade_min = null, idade_max = null, nome = '', professora = '') => ({ dias, horario, tipo, capacidade, idade_min, idade_max, nome, professora });
+const GRADE_PADRAO = [
+    G([1, 3], '14:50', 'hidro', 8), G([1, 3], '15:30', 'individual', 1), G([1, 3], '16:00', 'individual', 1), G([1, 3], '16:30', 'individual', 1, null, null, 'Individual fixa'),
+    G([1, 3], '17:20', 'grupo', 10, 6, 12), G([1, 3], '18:00', 'grupo', 10, 4, 6), G([1, 3], '18:40', 'grupo', 10, 7, 12),
+    G([1, 3], '19:20', 'grupo', 10, 3, 5, 'Grupo · iniciação'), G([1, 3], '20:00', 'grupo', 10, 7, 16), G([1, 3], '20:40', 'individual', 1, null, null, 'Individual fixo'),
+    G([2, 4], '16:50', 'individual', 1, null, null, 'Individual fixo'), G([2, 4], '17:20', 'grupo', 10, 6, 8), G([2, 4], '18:00', 'grupo', 10, 4, 6),
+    G([2, 4], '18:40', 'grupo', 10, 4, 6), G([2, 4], '19:20', 'grupo', 10, 6, 16),
+    ...['15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30'].map(h => G([5], h, 'individual', 1, null, null, '', 'Tia Bruna')),
+    ...['16:00', '16:30', '17:00', '17:30', '18:00', '18:30'].map(h => G([5], h, 'individual', 1, null, null, '', 'Tia Auri'))
+];
+let gradeAdmin = [], matAdmin = [], gradePai = [], matPai = [], matAtual = null;
+const idGrade = g => `g-${g.dias.join('')}-${g.horario.replace(':', '')}${g.professora ? '-' + slug(g.professora) : ''}`;
+const porHorario = (a, b) => `${a.dias.join('')}${a.horario}${a.professora}`.localeCompare(`${b.dias.join('')}${b.horario}${b.professora}`);
+const nomeDias = dias => dias.map(d => DIAS[d]).join(' e ');
+const criancasDe = p => p.criancas?.length ? p.criancas : (p.nome_crianca ? [p.nome_crianca] : []);
+const faixa = g => g.idade_min != null || g.idade_max != null ? `${g.idade_min ?? 0} a ${g.idade_max ?? '+'} anos` : '';
+const idadeDe = nasc => {
+    if (!nasc) return null;
+    const h = new Date(), n = new Date(nasc + 'T12:00:00');
+    return h.getFullYear() - n.getFullYear() - (h < new Date(h.getFullYear(), n.getMonth(), n.getDate()) ? 1 : 0);
+};
+const compativel = (g, idade) => idade == null || ((g.idade_min == null || idade >= g.idade_min) && (g.idade_max == null || idade <= g.idade_max));
+const ocupDia = (g, d) => matAdmin.filter(m => m.id_turma === g.id && m.dias.includes(d)).length;
+
+function ouvirGrade() {
+    unsubs.push(onSnapshot(collection(db, "grade"), snap => { gradeAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(porHorario); renderGrade(); renderCalendario(); }, err => console.error(err)));
+    unsubs.push(onSnapshot(collection(db, "matriculas"), snap => { matAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderGrade(); renderCalendario(); }, err => console.error(err)));
+}
+function renderGrade() {
+    const el = $('lista-grade');
+    if (!el) return;
+    if (!gradeAdmin.length) { el.innerHTML = '<div class="card" style="text-align:center;"><p style="margin-bottom:8px;">Nenhuma turma fixa cadastrada ainda.</p><button class="btn-action" onclick="window.importarGrade()">📥 Importar grade da escola</button></div>'; return; }
+    let html = '', atual = '';
+    gradeAdmin.forEach(g => {
+        const chave = g.dias.join('');
+        if (chave !== atual) { atual = chave; html += `<h3 class="grupo-dias">${GRUPOS_DIAS[chave] || nomeDias(g.dias)}</h3>`; }
+        const ms = matAdmin.filter(m => m.id_turma === g.id);
+        html += `<div class="class-card" style="border-left:6px solid ${COR_PROF[g.professora] || '#00b4d8'};">
+            <p><b>${g.horario}</b> · ${esc(g.nome || TIPOS[g.tipo])}${faixa(g) ? ' · ' + faixa(g) : ''}</p>
+            <p><small>👥 ${g.dias.map(d => `${DIAS[d]} ${ocupDia(g, d)}/${g.capacidade}`).join(' · ')}</small></p>
+            <select class="sel-prof" onchange="window.trocarProf('${g.id}', this.value)">${['', 'Tia Bruna', 'Tia Auri'].map(pr => `<option value="${pr}"${pr === (g.professora || '') ? ' selected' : ''}>${pr || 'Professora a definir'}</option>`).join('')}</select>
+            <div>${ms.map(m => `<span class="chip-falta" style="background:#e3f6fb;">${esc(m.nome_crianca)}${m.dias.length < g.dias.length ? ' (' + nomeDias(m.dias) + ')' : ''} <a onclick="window.removerMatricula('${m.id}')">✕</a></span>`).join('') || '<small style="color:#888;">Nenhum aluno ainda.</small>'}</div>
+            <button class="btn-action" style="margin-top:10px; padding:11px;" onclick="window.abrirMatricula('${g.id}')">➕ Incluir aluno</button>
+        </div>`;
+    });
+    el.innerHTML = html;
+}
+window.visaoTurmas = v => {
+    $('lista-grade').style.display = v === 'fixas' ? 'block' : 'none';
+    $('resumo-hoje').style.display = $('lista-admin-turmas').style.display = v === 'fixas' ? 'none' : 'block';
+    document.querySelectorAll('#admin-turmas .chip').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+};
+window.importarGrade = async function() {
+    if (!confirm(`Cadastrar as ${GRADE_PADRAO.length} turmas fixas da escola?`)) return;
+    try {
+        const lote = writeBatch(db);
+        GRADE_PADRAO.forEach(g => lote.set(doc(db, "grade", idGrade(g)), g, { merge: true }));
+        await lote.commit();
+        toast('📥 Grade importada!');
+    } catch (e) { alert("Erro ao importar: " + (e.code || e.message)); }
+};
+window.trocarProf = async (id, v) => { try { await updateDoc(doc(db, "grade", id), { professora: v }); } catch (e) { alert("Erro: " + (e.code || e.message)); } };
+
+window.abrirMatricula = id => {
+    const g = gradeAdmin.find(x => x.id === id);
+    if (!g) return;
+    matAtual = id;
+    $('mt-turma').textContent = `${nomeDias(g.dias)} · ${g.horario} · ${g.nome || TIPOS[g.tipo]}${faixa(g) ? ' · ' + faixa(g) : ''}`;
+    const ja = new Set(matAdmin.filter(m => m.id_turma === id).map(m => `${m.id_responsavel}||${m.nome_crianca}`));
+    const alunos = respAdmin.flatMap(p => criancasDe(p).map(c => ({ p, c, idade: idadeDe(p.nascimentos?.[c]) }))).filter(a => !ja.has(`${a.p.uid}||${a.c}`)).sort((x, y) => x.c.localeCompare(y.c));
+    $('mt-aluno').innerHTML = alunos.length
+        ? alunos.map(a => `<option value="${esc(a.p.uid)}||${esc(a.c)}">${esc(a.c)}${a.idade != null ? ` (${a.idade} anos)` : ''}${compativel(g, a.idade) ? '' : ' ⚠️ fora da faixa'} — ${esc(a.p.nome_responsavel)}</option>`).join('')
+        : '<option value="">Nenhum aluno disponível (cadastre em Alunos → ➕ Novo aluno)</option>';
+    $('mt-dias').innerHTML = g.dias.map(d => `<label class="dia-ck"><input type="checkbox" value="${d}" checked> ${DIAS[d]}</label>`).join('');
+    $('modal-mat').style.display = 'flex';
+};
+window.fecharMatricula = () => { $('modal-mat').style.display = 'none'; };
+window.confirmarMatricula = async function() {
+    const g = gradeAdmin.find(x => x.id === matAtual), v = $('mt-aluno').value;
+    if (!g || !v) return;
+    const [uid, ...resto] = v.split('||'), crianca = resto.join('||');
+    const dias = [...document.querySelectorAll('#mt-dias input:checked')].map(i => Number(i.value));
+    if (!dias.length) return alert("Escolha pelo menos um dia.");
+    const cheio = dias.filter(d => ocupDia(g, d) >= g.capacidade).map(d => DIAS[d]);
+    if (cheio.length) return alert(`Sem vaga: ${cheio.join(' e ')}.`);
+    const idade = idadeDe(respAdmin.find(r => r.uid === uid)?.nascimentos?.[crianca]);
+    if (!compativel(g, idade) && !confirm(`${crianca} tem ${idade} anos e a turma é de ${faixa(g)}. Incluir mesmo assim?`)) return;
+    try {
+        await addDoc(collection(db, "matriculas"), { id_turma: g.id, id_responsavel: uid, nome_crianca: crianca, dias, desde: Date.now() });
+        window.fecharMatricula();
+    } catch (e) { alert("Erro ao incluir: " + (e.code || e.message)); }
+};
+window.removerMatricula = async id => {
+    if (!confirm("Remover este aluno da turma?")) return;
+    try { await deleteDoc(doc(db, "matriculas", id)); } catch (e) { alert("Erro ao remover: " + (e.code || e.message)); }
+};
+
+// ----- cadastro de alunos (só a professora) + sugestão de turma pela idade
+window.abrirAluno = (uid = '', nome = '') => {
+    $('ac-resp').innerHTML = respAdmin.slice().sort((a, b) => (a.nome_responsavel || '').localeCompare(b.nome_responsavel || '')).map(p => `<option value="${esc(p.uid)}">${esc(p.nome_responsavel)}${p.telefone ? ' · ' + esc(p.telefone) : ''}</option>`).join('');
+    if (uid) $('ac-resp').value = uid;
+    $('ac-resp').disabled = !!uid;
+    $('ac-nome').value = nome; $('ac-nome').readOnly = !!nome;
+    $('ac-nasc').value = respAdmin.find(r => r.uid === uid)?.nascimentos?.[nome] || '';
+    $('ac-sug').innerHTML = '';
+    $('al-titulo').textContent = nome ? '✏️ Dados do aluno' : '➕ Novo aluno';
+    $('modal-aluno').style.display = 'flex';
+};
+window.fecharAluno = () => { $('modal-aluno').style.display = 'none'; };
+window.salvarAluno = async function() {
+    const uid = $('ac-resp').value, nome = $('ac-nome').value.trim(), nasc = $('ac-nasc').value;
+    if (!uid || !nome) return alert("Escolha o responsável e escreva o nome da criança.");
+    const p = respAdmin.find(r => r.uid === uid) || {}, criancas = [...criancasDe(p)], nascimentos = { ...(p.nascimentos || {}) };
+    if (!criancas.includes(nome)) criancas.push(nome);
+    if (nasc) nascimentos[nome] = nasc;
+    try {
+        await updateDoc(doc(db, "responsaveis", uid), { criancas, nascimentos });
+        const idade = idadeDe(nasc), box = $('ac-sug');
+        box.innerHTML = '<p style="color:#2a9d8f; font-weight:bold; margin:8px 0;">✅ Aluno salvo!</p>';
+        if (idade == null) { box.innerHTML += '<p style="font-size:13px; color:#888;">Informe a data de nascimento para ver as turmas compatíveis.</p>'; return; }
+        const sug = gradeAdmin.filter(g => g.tipo !== 'individual' && compativel(g, idade) && g.dias.every(d => ocupDia(g, d) < g.capacidade));
+        box.innerHTML += sug.length
+            ? `<p style="font-size:13px; margin-bottom:6px;"><b>Turmas compatíveis com ${idade} anos e com vaga:</b></p>` + sug.map(g => `<button type="button" class="chip" style="margin:3px 4px 3px 0;" data-uid="${esc(uid)}" data-nome="${esc(nome)}" onclick="window.incluirRapido('${g.id}', this)">${nomeDias(g.dias)} ${g.horario} · ${esc(g.nome || TIPOS[g.tipo])}</button>`).join('')
+            : '<p style="font-size:13px; color:#888;">Nenhuma turma de grupo com vaga para essa idade.</p>';
+    } catch (e) { alert("Erro ao salvar: " + (e.code || e.message)); }
+};
+window.incluirRapido = async function(id, btn) {
+    const g = gradeAdmin.find(x => x.id === id);
+    try {
+        await addDoc(collection(db, "matriculas"), { id_turma: id, id_responsavel: btn.dataset.uid, nome_crianca: btn.dataset.nome, dias: g.dias, desde: Date.now() });
+        btn.textContent = '✅ ' + btn.textContent; btn.disabled = true;
+    } catch (e) { alert("Erro ao incluir: " + (e.code || e.message)); }
+};
+
+// ----- pais: veem as aulas fixas dos filhos
+function ouvirFixasPai() {
+    unsubs.push(onSnapshot(collection(db, "grade"), snap => { gradePai = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderFixasPai(); }, err => console.error(err)));
+    unsubs.push(onSnapshot(query(collection(db, "matriculas"), where("id_responsavel", "==", currentUserData.uid)), snap => { matPai = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderFixasPai(); }, err => console.error(err)));
+}
+function renderFixasPai() {
+    const el = $('minhas-fixas');
+    if (!el) return;
+    const itens = matPai.map(m => ({ m, g: gradePai.find(x => x.id === m.id_turma) })).filter(i => i.g)
+        .sort((a, b) => a.m.nome_crianca.localeCompare(b.m.nome_crianca) || a.g.horario.localeCompare(b.g.horario));
+    el.innerHTML = itens.length ? `<div class="card"><h2 style="font-size:18px;">📌 Aulas fixas</h2>${itens.map(i => `<div class="class-card"><p>🏊‍♂️ <b>${esc(i.m.nome_crianca)}</b></p><p>${nomeDias(i.m.dias)} · <b>${i.g.horario}</b> · ${esc(i.g.nome || TIPOS[i.g.tipo])}</p>${i.g.professora ? `<p><small>${esc(i.g.professora)}</small></p>` : ''}</div>`).join('')}</div>` : '';
+}
+
+// ----- calendário: aulas fixas do dia
+function fixasDoDia(iso) {
+    const dow = new Date(iso + 'T12:00:00').getDay(), gs = gradeAdmin.filter(g => g.dias.includes(dow));
+    if (!gs.length) return '';
+    return '<p style="font-weight:bold; margin:6px 0;">📌 Aulas fixas</p>' + gs.map(g => {
+        const nomes = matAdmin.filter(m => m.id_turma === g.id && m.dias.includes(dow)).map(m => esc(m.nome_crianca));
+        return `<div class="class-card" style="border-left:6px solid ${COR_PROF[g.professora] || '#00b4d8'};"><p><b>${g.horario}</b> · ${esc(g.nome || TIPOS[g.tipo])}${faixa(g) ? ' · ' + faixa(g) : ''}${g.professora ? ' · ' + esc(g.professora) : ''}</p><p><small>👥 ${nomes.length}/${g.capacidade}${nomes.length ? ' · ' + nomes.join(', ') : ''}</small></p></div>`;
+    }).join('') + '<p style="font-weight:bold; margin:10px 0 6px;">🔁 Reposições do dia</p>';
+}
+
 // ===== HISTÓRICO E CHAMADA (professora) =====
 function ouvirHistorico() {
     unsubs.push(onSnapshot(collection(db, "historico"), snap => {
@@ -876,7 +1040,7 @@ function renderPais(el, turmas) {
 window.abrirModalAgendamento = function(turmaId, data, horario, professora) {
     const criancas = currentUserData?.criancas || [];
     if (!criancas.length) {
-        alert("Você precisa cadastrar um peixinho no seu Perfil primeiro!");
+        alert("Seu filho(a) ainda não foi vinculado pela escola. Fale com a escola para concluir o cadastro.");
         window.mudarAbaPai('pai-perfil');
         return;
     }
@@ -980,32 +1144,9 @@ function renderizarPerfil() {
     $('lista-filhos').innerHTML = filhos.length ? filhos.map((f, i) => `
         <div style="background:#f1f1f1; padding:10px; margin-bottom:10px; border-radius:8px; display:flex; justify-content:space-between; align-items:center;">
             <span>🏊‍♂️ <b>${esc(f)}</b></span>
-            <button onclick="window.removerFilho(${i})" style="background:#ef233c; color:white; border:none; padding:5px 10px; border-radius:5px; cursor:pointer;">Remover</button>
-        </div>`).join('') : '<p style="font-size:14px; color:#666;">Nenhum peixinho cadastrado.</p>';
+            
+        </div>`).join('') : '<p style="font-size:14px; color:#666;">Aguardando a escola vincular seu filho(a).</p>';
 }
-
-window.adicionarFilho = async function() {
-    const nome = $('novo-filho-nome').value.trim();
-    if (!nome) return;
-    const nova = [...currentUserData.criancas, nome];
-    try {
-        await updateDoc(doc(db, "responsaveis", currentUserData.uid), { criancas: nova });
-        currentUserData.criancas = nova;
-        $('novo-filho-nome').value = '';
-        renderizarPerfil();
-        alert(`${nome} adicionado(a) com sucesso!`);
-    } catch (e) { alert("Erro ao salvar."); }
-};
-
-window.removerFilho = async function(index) {
-    if (!confirm("Remover este peixinho do seu perfil?")) return;
-    const nova = currentUserData.criancas.filter((_, i) => i !== index);
-    try {
-        await updateDoc(doc(db, "responsaveis", currentUserData.uid), { criancas: nova });
-        currentUserData.criancas = nova;
-        renderizarPerfil();
-    } catch (e) { alert("Erro ao remover."); }
-};
 
 window.salvarTelefone = async function() {
     const tel = $('perfil-telefone').value.trim();
@@ -1027,7 +1168,7 @@ window.addEventListener('scroll', () => {
 
 // ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
 let ocupado = false;
-['confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento'].forEach(nome => {
+['confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
     const original = window[nome];
     window[nome] = async (...args) => {
         if (ocupado) return;
@@ -1205,6 +1346,9 @@ button.chip-alu { cursor:pointer; }
 .barra { height:10px; background:#e0e0e0; border-radius:6px; overflow:hidden; }
 .barra i { display:block; height:100%; background:linear-gradient(90deg,#2a9d8f,#00b4d8); }
 .atraso { background:#fde8ea; color:#c1121f; border-radius:10px; padding:2px 8px; font-size:12px; font-weight:bold; }
+.grupo-dias { color:var(--dark); margin:16px 0 8px; font-size:16px; }
+.sel-prof { width:100%; padding:10px; border:2px solid #e0e0e0; border-radius:10px; font-size:14px; margin:6px 0 8px; background:#fff; }
+.dia-ck { display:inline-flex; gap:6px; align-items:center; margin-right:14px; font-size:16px; }
 </style>
 </head>
 <body>
@@ -1242,7 +1386,6 @@ button.chip-alu { cursor:pointer; }
             <form id="form-register">
                 <div class="form-group"><label>Seu Nome (Responsável)</label><input type="text" id="reg-nome" required maxlength="80" autocomplete="name"></div>
                 <div class="form-group"><label>Telefone / WhatsApp</label><input type="tel" id="reg-telefone" required maxlength="20" inputmode="tel" autocomplete="tel"></div>
-                <div class="form-group"><label>Nome do Peixinho(a)</label><input type="text" id="reg-crianca" required placeholder="Primeiro aluno" maxlength="60"></div>
                 <div class="form-group"><label>Nome de Usuário (Sem espaços)</label><input type="text" id="reg-user" required placeholder="ex: familiasilva" autocomplete="username" autocapitalize="none" maxlength="30"></div>
                 <div class="form-group"><label>Senha (Mínimo 6 caracteres)</label><input type="password" id="reg-pass" required minlength="6" autocomplete="new-password"></div>
                 <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin:5px 0;"><input type="checkbox" id="reg-aceite" required style="width:auto; margin-top:3px;"><span>Li e aceito o <a href="#" onclick="event.preventDefault(); window.abrirPrivacidade()">aviso de privacidade</a>, inclusive o uso dos dados da criança.</span></label>
@@ -1301,6 +1444,7 @@ button.chip-alu { cursor:pointer; }
                     <p id="al-resumo" style="text-align:center; font-size:14px; margin-bottom:10px;"></p>
                     <div id="fin-resumo"></div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                        <button type="button" class="mini-btn" style="background:var(--orange);" onclick="window.abrirAluno()">➕ Novo aluno</button>
                         <button type="button" class="mini-btn" style="background:#2a9d8f;" onclick="window.exportarCsv()">⬇️ Planilha do mês (CSV)</button>
                         <button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.exportarBackup()">💾 Backup completo</button>
                     </div>
@@ -1331,8 +1475,13 @@ button.chip-alu { cursor:pointer; }
                 <div id="lista-atividade">Carregando...</div>
             </div>
             <div id="admin-turmas" class="admin-section">
-                <div id="resumo-hoje"></div>
-                <div id="lista-admin-turmas">Carregando turmas...</div>
+                <div class="chips" style="margin-bottom:12px;">
+                    <button type="button" class="chip on" data-v="fixas" onclick="window.visaoTurmas('fixas')">📌 Aulas fixas</button>
+                    <button type="button" class="chip" data-v="reposicoes" onclick="window.visaoTurmas('reposicoes')">🔁 Reposições</button>
+                </div>
+                <div id="lista-grade"></div>
+                <div id="resumo-hoje" style="display:none;"></div>
+                <div id="lista-admin-turmas" style="display:none;">Carregando turmas...</div>
             </div>
         </div>
 
@@ -1344,7 +1493,8 @@ button.chip-alu { cursor:pointer; }
                 <div class="nav-tab" data-aba="pai-perfil" onclick="window.mudarAbaPai('pai-perfil')"><span class="ico">⚙️</span><span class="rot">Perfil</span></div>
             </div>
             <div id="pai-aulas" class="parent-section"><div id="lista-aulas-disponiveis">Buscando aulas...</div></div>
-            <div id="pai-agendamentos" class="parent-section" style="display:none;"><div id="lista-meus-agendamentos">Buscando...</div></div>
+            <div id="pai-agendamentos" class="parent-section" style="display:none;"><div id="minhas-fixas"></div>
+                <div id="lista-meus-agendamentos">Buscando...</div></div>
             <div id="pai-pagamento" class="parent-section" style="display:none;">
                 <div class="card"><h2>💳 Mensalidade</h2><div id="pix-box"></div></div>
                 <div class="card">
@@ -1368,11 +1518,7 @@ button.chip-alu { cursor:pointer; }
                 <hr style="margin:25px 0; border:0; border-top:1px solid #eee;">
                 <h3 style="color:var(--dark); font-size:18px; margin-bottom:15px;">Meus Peixinhos (Alunos)</h3>
                 <div id="lista-filhos"></div>
-                <div style="margin-top:20px; background:var(--light); padding:15px; border-radius:10px;">
-                    <label style="font-size:14px; font-weight:bold; color:var(--dark); margin-bottom:5px; display:block;">Adicionar novo aluno</label>
-                    <input type="text" id="novo-filho-nome" placeholder="Nome da criança" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; margin-bottom:10px;">
-                    <button type="button" onclick="window.adicionarFilho()" style="width:100%; padding:10px; background:var(--secondary); color:#fff; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">+ Adicionar</button>
-                </div>
+                <p style="font-size:13px; color:#666; margin-top:15px;">Para incluir ou alterar alunos, fale com a escola.</p>
             </div>
         </div>
     </div>
@@ -1393,9 +1539,36 @@ button.chip-alu { cursor:pointer; }
     </div>
 </div>
 
-<button id="fab" type="button" onclick="window.fabAcao()" aria-label="Liberar nova turma"><span class="fab-ico">➕</span><span class="fab-rot" id="fab-rot">Nova turma</span></button>
+<button id="fab" type="button" onclick="window.fabAcao()" aria-label="Liberar nova turma"><span class="fab-ico">➕</span><span class="fab-rot" id="fab-rot">Nova reposição</span></button>
 <div id="offline">📡 Sem internet. Suas ações serão enviadas quando a conexão voltar.</div>
 <div id="toast"></div>
+
+<div id="modal-mat" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">➕ Incluir aluno</h2>
+        <p id="mt-turma" style="margin-bottom:12px; color:#555;"></p>
+        <div class="form-group"><label>Aluno</label><select id="mt-aluno"></select></div>
+        <div class="form-group"><label>Dias</label><div id="mt-dias"></div></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharMatricula()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.confirmarMatricula()">Incluir</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-aluno" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:90vh; overflow-y:auto;">
+        <h2 id="al-titulo" style="color:var(--primary);">➕ Novo aluno</h2>
+        <div class="form-group"><label>Responsável</label><select id="ac-resp"></select></div>
+        <div class="form-group"><label>Nome da criança</label><input type="text" id="ac-nome" maxlength="60"></div>
+        <div class="form-group"><label>Data de nascimento</label><input type="date" id="ac-nasc"></div>
+        <div id="ac-sug"></div>
+        <div style="display:flex; gap:10px; margin-top:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharAluno()">Fechar</button>
+            <button type="button" class="btn-action" onclick="window.salvarAluno()">Salvar</button>
+        </div>
+    </div>
+</div>
 
 <div id="modal-pgto" class="modal-overlay">
     <div class="modal-box" style="text-align:left;">
