@@ -9,7 +9,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { initializeFirestore, collection, addDoc, onSnapshot, query, where, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { initializeFirestore, collection, addDoc, onSnapshot, query, where, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, increment, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, sendPasswordResetEmail, updatePassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -113,6 +113,7 @@ async function iniciarPai(user) {
     ouvirPagamentosPai();
     ouvirPlanosPai();
     ouvirFixasPai();
+    ouvirFaltasPai();
     carregarMeusAgendamentos();
     renderizarPerfil();
 }
@@ -138,7 +139,7 @@ window.addEventListener('DOMContentLoaded', () => {
             const atual = turmasAdmin.find(x => x.id === editandoId);
             if (atual && vagas < atual.vagas_ocupadas) return alert(`Já existem ${atual.vagas_ocupadas} aluno(s) agendado(s). O total de vagas não pode ser menor que isso.`);
             try {
-                await updateDoc(doc(db, "turmas", editandoId), { data: $('turma-data').value, horario: $('turma-horario').value, nivel: $('turma-nivel').value, capacidade_maxima: vagas });
+                await updateDoc(doc(db, "turmas", editandoId), { data: $('turma-data').value, horario: $('turma-horario').value, nivel: $('turma-nivel').value, capacidade_maxima: vagas, professora: profsForm() });
                 resetarForm();
                 window.mudarAbaAdmin('admin-turmas');
                 alert("Turma atualizada!");
@@ -147,7 +148,7 @@ window.addEventListener('DOMContentLoaded', () => {
         }
         try {
             const nova = {
-                professora: prof,
+                professora: profsForm(),
                 data: $('turma-data').value,
                 horario: $('turma-horario').value,
                 nivel: $('turma-nivel').value,
@@ -398,7 +399,7 @@ function ouvirAgendamentosAdmin() {
         if (!primeira) snap.docChanges().forEach(c => {
             if (c.type !== 'added') return;
             const a = c.doc.data(), i = infoAg(a);
-            if (i.professora === ADMINS[auth.currentUser?.email]) toast(`🔔 ${a.nome_responsavel} agendou ${a.nome_crianca} — ${fmtData(i.data)} às ${i.horario}`);
+            if ((i.professora || '').includes(ADMINS[auth.currentUser?.email])) toast(`🔔 ${a.nome_responsavel} agendou ${a.nome_crianca} — ${fmtData(i.data)} às ${i.horario}`);
         });
         primeira = false;
         renderAtividade();
@@ -417,7 +418,7 @@ function renderAtividade() {
     if (!el) return;
     const minha = ADMINS[auth.currentUser?.email];
     const itens = agsAdmin.map(a => ({ a, ...infoAg(a) }));
-    const ehNovo = i => i.a.criado_em > vistoAdmin && i.professora === minha;
+    const ehNovo = i => i.a.criado_em > vistoAdmin && (i.professora || '').includes(minha);
     const n = itens.filter(ehNovo).length;
     const aba = document.querySelector('#admin-panel .nav-tab[data-aba="admin-atividade"]');
     if (aba) aba.dataset.badge = n || '';
@@ -501,7 +502,13 @@ const nomeMes = m => `${MESES[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;
 function ouvirAlunosAdmin() {
     const erro = err => { console.error(err); const el = $('lista-alunos-admin'); if (el) el.innerHTML = `<p class="card erro">Erro ao carregar (${esc(err.code)}). Confira as regras do Firestore.</p>`; };
     unsubs.push(onSnapshot(collection(db, "responsaveis"), snap => { respAdmin = snap.docs.map(d => ({ uid: d.id, ...d.data() })); renderAlunos(); }, erro));
-    unsubs.push(onSnapshot(collection(db, "faltas"), snap => { faltasAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderAlunos(); }, erro));
+    let primeiraF = true;
+    unsubs.push(onSnapshot(collection(db, "faltas"), snap => {
+        faltasAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (!primeiraF) snap.docChanges().forEach(c => { const f = c.doc.data(); if (c.type === 'added' && f.origem === 'pai') toast(`📅 Falta avisada: ${f.nome_crianca} (${fmtData(f.data)} ${f.horario || ''})`); });
+        primeiraF = false;
+        renderAlunos();
+    }, erro));
     ouvirMensalidades();
 }
 function ouvirMensalidades() {
@@ -532,8 +539,8 @@ function renderAlunos() {
     $('al-mes').textContent = nomeMes(mesAl);
     const dados = respAdmin.flatMap(p => (p.criancas?.length ? p.criancas : (p.nome_crianca ? [p.nome_crianca] : [])).map(c => {
         const fs = faltasAdmin.filter(f => f.id_responsavel === p.uid && f.nome_crianca === c).sort((x, y) => x.data.localeCompare(y.data));
-        const reps = agsAdmin.filter(a => a.id_responsavel === p.uid && a.nome_crianca === c).length;
-        return { p, c, st: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]), m: mensAdmin[idMens(p.uid, c, mesAl)], f: infoMensal(planosAdmin[idPlano(p.uid, c)] || {}, mesAl, mensAdmin[idMens(p.uid, c, mesAl)]), pago: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]) === 'pago', fs, reps, saldo: Math.max(0, fs.length - reps) };
+        const reps = agsAdmin.filter(a => a.id_responsavel === p.uid && a.nome_crianca === c && msTs(a.criado_em) >= INICIO_MS).length;
+        return { p, c, st: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]), m: mensAdmin[idMens(p.uid, c, mesAl)], f: infoMensal(planosAdmin[idPlano(p.uid, c)] || {}, mesAl, mensAdmin[idMens(p.uid, c, mesAl)]), pago: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]) === 'pago', fs, reps, saldo: Math.max(0, fs.filter(f => sit(f) === 'direito').length - reps) };
     })).sort((x, y) => x.c.localeCompare(y.c));
     const vistos = new Set(dados.map(d => idMens(d.p.uid, d.c, mesAl)));
     Object.entries(mensAdmin).forEach(([id, m]) => {
@@ -573,7 +580,7 @@ function renderAlunos() {
                 ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button><button class="mini-btn so-dona" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
             </div>
             <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
-            <div>${d.fs.map(f => `<span class="chip-falta">${fmtData(f.data)} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`).join('')}</div>
+            <div>${d.fs.map(f => { const st = sit(f); return `<span class="chip-falta"${st === 'sem' ? ' style="background:#fde8ea;"' : ''}>${st === 'direito' ? '✅' : st === 'analise' ? '🩺' : '❌'} ${fmtData(f.data)}${f.origem === 'pai' ? ' · pai' : ''}${f.atestado ? ` <a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`; }).join('')}</div>
             <div style="display:flex; gap:8px; margin-top:8px;">
                 <input type="date" value="${hojeISO()}" style="flex:1; padding:8px; border:2px solid #e0e0e0; border-radius:8px;">
                 <button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>
@@ -784,7 +791,7 @@ function renderGrade() {
         html += `<div class="class-card" style="border-left:6px solid ${COR_PROF[g.professora] || '#00b4d8'};">
             <p><b>${g.horario}</b> · ${esc(g.nome || TIPOS[g.tipo])}${faixa(g) ? ' · ' + faixa(g) : ''}</p>
             <p><small>👥 ${g.dias.map(d => `${DIAS[d]} ${ocupDia(g, d)}/${g.capacidade}`).join(' · ')}</small></p>
-            <select class="sel-prof" onchange="window.trocarProf('${g.id}', this.value)">${['', 'Tia Bruna', 'Tia Auri'].map(pr => `<option value="${pr}"${pr === (g.professora || '') ? ' selected' : ''}>${pr || 'Professora a definir'}</option>`).join('')}</select>
+            <div class="profs">${['Tia Bruna', 'Tia Auri'].map(pr => `<label class="prof-ck"><input type="checkbox" data-prof="${pr}"${(g.professora || '').includes(pr) ? ' checked' : ''} onchange="window.trocarProfs('${g.id}', this)"> ${pr}</label>`).join('')}${g.professora ? '' : '<small style="color:#888;">a definir</small>'}</div>
             <div>${ms.map(m => `<span class="chip-falta" style="background:#e3f6fb;">${esc(m.nome_crianca)}${m.dias.length < g.dias.length ? ' (' + nomeDias(m.dias) + ')' : ''} <a onclick="window.removerMatricula('${m.id}')">✕</a></span>`).join('') || '<small style="color:#888;">Nenhum aluno ainda.</small>'}</div>
             <button class="btn-action" style="margin-top:10px; padding:11px;" onclick="window.abrirMatricula('${g.id}')">➕ Incluir aluno</button>
         </div>`;
@@ -805,7 +812,10 @@ window.importarGrade = async function() {
         toast('📥 Grade importada!');
     } catch (e) { alert("Erro ao importar: " + (e.code || e.message)); }
 };
-window.trocarProf = async (id, v) => { try { await updateDoc(doc(db, "grade", id), { professora: v }); } catch (e) { alert("Erro: " + (e.code || e.message)); } };
+window.trocarProfs = async (id, el) => {
+    const sel = [...el.closest('.profs').querySelectorAll('input:checked')].map(i => i.dataset.prof);
+    try { await updateDoc(doc(db, "grade", id), { professora: sel.join(' e ') }); } catch (e) { alert("Erro: " + (e.code || e.message)); }
+};
 
 window.abrirMatricula = id => {
     const g = gradeAdmin.find(x => x.id === id);
@@ -888,7 +898,9 @@ function renderFixasPai() {
     if (!el) return;
     const itens = matPai.map(m => ({ m, g: gradePai.find(x => x.id === m.id_turma) })).filter(i => i.g)
         .sort((a, b) => a.m.nome_crianca.localeCompare(b.m.nome_crianca) || a.g.horario.localeCompare(b.g.horario));
-    el.innerHTML = itens.length ? `<div class="card"><h2 style="font-size:18px;">📌 Aulas fixas</h2>${itens.map(i => `<div class="class-card"><p>🏊‍♂️ <b>${esc(i.m.nome_crianca)}</b></p><p>${nomeDias(i.m.dias)} · <b>${i.g.horario}</b> · ${esc(i.g.nome || TIPOS[i.g.tipo])}</p>${i.g.professora ? `<p><small>${esc(i.g.professora)}</small></p>` : ''}</div>`).join('')}</div>` : '';
+    el.innerHTML = itens.length ? `<div class="card"><h2 style="font-size:18px;">📌 Aulas fixas</h2>
+        <p style="font-size:12px; color:#666; margin-bottom:10px;">ℹ️ Avise a falta com pelo menos <b>24 horas</b> de antecedência para ter direito à reposição. Em caso de doença, anexe o atestado.</p>
+        ${itens.map(i => `<div class="class-card"><p>🏊‍♂️ <b>${esc(i.m.nome_crianca)}</b> <small>· ${creditos(i.m.nome_crianca)} reposição(ões) disponível(is)</small></p><p>${nomeDias(i.m.dias)} · <b>${i.g.horario}</b> · ${esc(i.g.nome || TIPOS[i.g.tipo])}</p>${i.g.professora ? `<p><small>${esc(i.g.professora)}</small></p>` : ''}${linhasFalta(i)}</div>`).join('')}</div>` : '';
 }
 
 // ----- calendário: aulas fixas do dia
@@ -1014,6 +1026,90 @@ window.trocarSenha = async function() {
     catch (e) { alert(e.code === 'auth/requires-recent-login' ? "Por segurança, saia e entre de novo para trocar a senha." : "Erro ao trocar a senha: " + (e.code || e.message)); }
 };
 
+// ===== FALTAS AVISADAS PELOS PAIS (24h) E ATESTADO =====
+// exigirCreditoParaReposicao: o responsável só agenda reposição se o filho tiver falta com direito.
+// inicio: agendamentos feitos antes dessa data não gastam crédito.
+const CONTROLE = { exigirCreditoParaReposicao: true, inicio: '2026-10-11' };
+const INICIO_MS = new Date(CONTROLE.inicio + 'T00:00:00').getTime();
+const msTs = v => v?.toMillis ? v.toMillis() : Number(v) || 0;
+let faltasPai = [], agsPai = [], atestadoAtual = null;
+// 'direito' | 'analise' | 'sem'
+const sit = f => {
+    if (f.origem !== 'pai') return 'direito';
+    if (f.atestado_status === 'aprovado') return 'direito';
+    if (f.atestado_status === 'recusado') return 'sem';
+    if (f.atestado) return 'analise';
+    return new Date(`${f.data}T${f.horario || '00:00'}:00`).getTime() - msTs(f.criado_em) >= 86400000 ? 'direito' : 'sem';
+};
+const creditos = nome => Math.max(0, faltasPai.filter(f => f.nome_crianca === nome && sit(f) === 'direito').length - agsPai.filter(a => a.nome_crianca === nome && msTs(a.criado_em) >= INICIO_MS).length);
+
+function ouvirFaltasPai() {
+    unsubs.push(onSnapshot(query(collection(db, "faltas"), where("id_responsavel", "==", currentUserData.uid)), snap => {
+        faltasPai = snap.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }));
+        renderFixasPai();
+    }, err => console.error(err)));
+}
+function proximasDatas(m, g, n = 4) {
+    const out = [], h = new Date();
+    for (let i = 0; i < 28 && out.length < n; i++) {
+        const x = new Date(h.getFullYear(), h.getMonth(), h.getDate() + i);
+        if (!m.dias.includes(x.getDay())) continue;
+        const iso = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+        if (new Date(`${iso}T${g.horario}:00`).getTime() > Date.now()) out.push(iso);
+    }
+    return out;
+}
+function linhasFalta(i) {
+    return proximasDatas(i.m, i.g).map(iso => {
+        const f = faltasPai.find(x => x.id_turma === i.g.id && x.data === iso && x.nome_crianca === i.m.nome_crianca);
+        const rot = `${DIAS[new Date(iso + 'T12:00:00').getDay()]} ${fmtData(iso).slice(0, 5)}`;
+        if (!f) return `<div class="occ"><span>${rot}</span><button class="mini-btn" style="background:#ef233c;" data-nome="${esc(i.m.nome_crianca)}" onclick="window.avisarFalta('${i.g.id}', '${iso}', this.dataset.nome)">Vou faltar</button></div>`;
+        const st = sit(f);
+        const txt = st === 'direito' ? '✅ Falta avisada · com direito à reposição' : st === 'analise' ? '🩺 Atestado em análise' : '❌ Sem direito à reposição (menos de 24h)';
+        const anexo = st === 'sem' && !f.atestado_status ? `<label class="mini-btn" style="background:var(--orange);">🩺 Atestado<input type="file" accept="image/*" hidden data-id="${f.id}" onchange="window.enviarAtestado(this)"></label>` : '';
+        return `<div class="occ"><span>${rot}<br><small>${txt}</small></span><span style="display:flex; gap:6px;">${anexo}<button class="mini-btn" style="background:#6c757d;" onclick="window.desfazerFalta('${f.id}')">Desfazer</button></span></div>`;
+    }).join('');
+}
+window.avisarFalta = async function(idTurma, iso, crianca) {
+    const g = gradePai.find(x => x.id === idTurma);
+    if (!g) return;
+    const resta = new Date(`${iso}T${g.horario}:00`).getTime() - Date.now();
+    if (resta <= 0) return alert("Essa aula já começou.");
+    if (resta < 86400000 && !confirm("Faltam menos de 24 horas para a aula. Sem atestado, essa falta NÃO dá direito à reposição. Registrar mesmo assim? (Você poderá anexar o atestado depois.)")) return;
+    try {
+        await addDoc(collection(db, "faltas"), { id_responsavel: currentUserData.uid, nome_crianca: crianca, id_turma: idTurma, data: iso, mes: iso.slice(0, 7), horario: g.horario, origem: 'pai', criado_em: serverTimestamp() });
+        toast('✅ Falta avisada!');
+    } catch (e) { alert("Erro ao avisar a falta: " + (e.code || e.message)); }
+};
+window.enviarAtestado = async function(input) {
+    const f = input.files[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) { input.value = ''; return alert("Envie uma foto ou print do atestado (imagem)."); }
+    try {
+        await updateDoc(doc(db, "faltas", input.dataset.id), { atestado: await comprimirImagem(f, 1300, 0.6), atestado_em: serverTimestamp() });
+        toast('🩺 Atestado enviado! A escola vai analisar.');
+    } catch (e) { alert("Erro ao enviar o atestado: " + (e.code || e.message)); }
+    input.value = '';
+};
+window.desfazerFalta = async function(id) {
+    if (!confirm("Desfazer o aviso de falta?")) return;
+    try { await deleteDoc(doc(db, "faltas", id)); } catch (e) { alert("Erro: " + (e.code || e.message)); }
+};
+window.verAtestado = id => {
+    const f = faltasAdmin.find(x => x.id === id);
+    if (!f?.atestado) return;
+    atestadoAtual = id;
+    $('at-img').src = f.atestado;
+    $('at-info').textContent = `${f.nome_crianca} · falta de ${fmtData(f.data)}${f.atestado_status ? ' · ' + (f.atestado_status === 'aprovado' ? '✅ aprovado' : '❌ recusado') : ''}`;
+    $('modal-atestado').style.display = 'flex';
+};
+window.decidirAtestado = async function(status) {
+    try {
+        await updateDoc(doc(db, "faltas", atestadoAtual), { atestado_status: status, atestado_decidido_em: Date.now() });
+        $('modal-atestado').style.display = 'none';
+    } catch (e) { alert("Erro: " + (e.code || e.message)); }
+};
+
 // ===== EDITAR TURMA =====
 function resetarForm() {
     editandoId = null;
@@ -1030,13 +1126,16 @@ window.editarTurma = function(id) {
     $('turma-horario').value = t.horario;
     $('turma-nivel').value = t.nivel;
     $('turma-vagas').value = t.capacidade_maxima;
+    setProfsForm(t.professora);
     $('titulo-form-turma').textContent = 'Editar Turma';
     $('btn-salvar-turma').textContent = 'Salvar alterações';
     $('btn-cancelar-edicao').style.display = 'block';
     window.mudarAbaAdmin('admin-nova');
 };
 window.cancelarEdicao = () => { resetarForm(); window.mudarAbaAdmin('admin-turmas'); };
-window.novaTurma = () => { if (editandoId) resetarForm(); window.mudarAbaAdmin('admin-nova'); };
+const profsForm = () => { const l = [$('tp-bruna').checked && 'Tia Bruna', $('tp-auri').checked && 'Tia Auri'].filter(Boolean); return l.length ? l.join(' e ') : (ADMINS[auth.currentUser?.email] || ''); };
+const setProfsForm = str => { $('tp-bruna').checked = (str || '').includes('Tia Bruna'); $('tp-auri').checked = (str || '').includes('Tia Auri'); };
+window.novaTurma = () => { if (editandoId) resetarForm(); if (!$('tp-bruna').checked && !$('tp-auri').checked) setProfsForm(ADMINS[auth.currentUser?.email]); window.mudarAbaAdmin('admin-nova'); };
 
 // ===== AVISO AOS PAIS (WhatsApp) =====
 async function abrirAviso(t) {
@@ -1092,7 +1191,9 @@ window.abrirModalAgendamento = function(turmaId, data, horario, professora) {
         return;
     }
     turmaAtual = { id: turmaId, data, horario, professora };
-    $('select-filho').innerHTML = criancas.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    const aptas = CONTROLE.exigirCreditoParaReposicao ? criancas.filter(n => creditos(n) > 0) : criancas;
+    if (!aptas.length) { alert("Seu filho(a) não tem reposição disponível. Avise a falta com 24 horas de antecedência (ou anexe o atestado) para ter direito à reposição."); return; }
+    $('select-filho').innerHTML = aptas.map(n => `<option value="${esc(n)}">${esc(n)}${CONTROLE.exigirCreditoParaReposicao ? ' — ' + creditos(n) + ' reposição(ões)' : ''}</option>`).join('');
     $('modal-texto').innerHTML = `Agendando aula para o dia <b>${fmtData(data)}</b> às <b>${esc(horario)}</b>.`;
     $('modal-agendamento').style.display = 'flex';
 };
@@ -1135,6 +1236,7 @@ window.confirmarAgendamento = async function() {
 function carregarMeusAgendamentos() {
     const q = query(collection(db, "agendamentos"), where("id_responsavel", "==", currentUserData.uid));
     unsubs.push(onSnapshot(q, async (snap) => {
+        agsPai = snap.docs.map(d => d.data());
         const lista = $('lista-meus-agendamentos');
         if (snap.empty) { lista.innerHTML = '<p style="text-align:center; padding:20px;">Você ainda não agendou nenhuma aula.</p>'; return; }
         const itens = await Promise.all(snap.docs.map(async (d) => {
@@ -1215,7 +1317,7 @@ window.addEventListener('scroll', () => {
 
 // ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
 let ocupado = false;
-['salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
+['avisarFalta', 'enviarAtestado', 'salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
     const original = window[nome];
     window[nome] = async (...args) => {
         if (ocupado) return;
@@ -1398,6 +1500,9 @@ button.chip-alu { cursor:pointer; }
 .dia-ck { display:inline-flex; gap:6px; align-items:center; margin-right:14px; font-size:16px; }
 .so-dona { display:none !important; }
 body.dona .so-dona { display:inline-block !important; }
+.occ { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-top:1px solid #eee; font-size:14px; }
+.prof-ck { display:inline-flex; gap:6px; align-items:center; margin:4px 14px 4px 0; font-size:15px; }
+.profs { margin:6px 0 8px; }
 </style>
 </head>
 <body>
@@ -1450,6 +1555,7 @@ body.dona .so-dona { display:inline-block !important; }
                 <form id="form-nova-turma">
                     <div class="form-group"><label>Data da Aula</label><input type="date" id="turma-data" required></div>
                     <div class="form-group"><label>Horário</label><input type="time" id="turma-horario" required></div>
+                        <div class="form-group"><label>Professora(s)</label><div><label class="prof-ck"><input type="checkbox" id="tp-bruna"> Tia Bruna</label><label class="prof-ck"><input type="checkbox" id="tp-auri"> Tia Auri</label></div></div>
                     <div class="form-group">
                         <label>Nível da Turma</label>
                         <select id="turma-nivel" required>
@@ -1660,6 +1766,19 @@ body.dona .so-dona { display:inline-block !important; }
             <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharPlano()">Cancelar</button>
             <button type="button" class="btn-action" onclick="window.salvarPlano()">Salvar</button>
         </div>
+    </div>
+</div>
+
+<div id="modal-atestado" class="modal-overlay">
+    <div class="modal-box" style="max-height:90vh; overflow:auto;">
+        <h2 style="color:var(--primary);">🩺 Atestado</h2>
+        <p id="at-info" style="margin:8px 0; color:#555;"></p>
+        <img id="at-img" alt="Atestado" style="max-width:100%; border-radius:10px;">
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#c1121f;" onclick="window.decidirAtestado('recusado')">Recusar</button>
+            <button type="button" class="btn-action" style="background:#2a9d8f;" onclick="window.decidirAtestado('aprovado')">Aprovar</button>
+        </div>
+        <button type="button" class="btn-action" style="background:#888;" onclick="document.getElementById('modal-atestado').style.display='none'">Fechar</button>
     </div>
 </div>
 
