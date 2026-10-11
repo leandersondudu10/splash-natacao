@@ -561,9 +561,12 @@ function renderAlunos() {
         : '<p style="text-align:center; font-size:13px; color:#666;">Defina o valor da mensalidade em ⚙️ Plano de cada aluno para ver o resumo financeiro.</p>';
     const nConf = dados.filter(d => d.st === 'informado').length;
     const abaAl = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
-    if (abaAl) abaAl.dataset.badge = nConf || '';
+    const nAt = dados.reduce((n, d) => n + d.fs.filter(f => sit(f) === 'analise').length, 0);
+    if (abaAl) abaAl.dataset.badge = (nConf + nAt) || '';
+    const chipAt = document.querySelector('#admin-alunos .chip[data-f="atestados"]');
+    if (chipAt) chipAt.textContent = nAt ? `🩺 Atestados (${nAt})` : '🩺 Atestados';
     document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
-    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && d.st !== 'pago') || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'confirmar' && d.st === 'informado') || (filtroAl === 'atrasados' && d.f.dias > 0) || (filtroAl === 'repor' && d.saldo > 0));
+    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && d.st !== 'pago') || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'confirmar' && d.st === 'informado') || (filtroAl === 'atestados' && d.fs.some(f => sit(f) === 'analise')) || (filtroAl === 'atrasados' && d.f.dias > 0) || (filtroAl === 'repor' && d.saldo > 0));
     el.innerHTML = lista.length ? lista.map(d => {
         const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`;
         return `
@@ -580,7 +583,7 @@ function renderAlunos() {
                 ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button><button class="mini-btn so-dona" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
             </div>
             <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
-            <div>${d.fs.map(f => { const st = sit(f); return `<span class="chip-falta"${st === 'sem' ? ' style="background:#fde8ea;"' : ''}>${st === 'direito' ? '✅' : st === 'analise' ? '🩺' : '❌'} ${fmtData(f.data)}${f.origem === 'pai' ? ' · pai' : ''}${f.atestado ? ` <a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''} <a onclick="window.removerFalta('${f.id}')">✕</a></span>`; }).join('')}</div>
+            <div class="faltas-lista">${d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + f.horario : ''}${f.origem === 'pai' ? ' · pai' : ''}</span><span>${f.atestado ? `<a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span></div>`; }).join('')}</div>
             <div style="display:flex; gap:8px; margin-top:8px;">
                 <input type="date" value="${hojeISO()}" style="flex:1; padding:8px; border:2px solid #e0e0e0; border-radius:8px;">
                 <button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>
@@ -893,14 +896,25 @@ function ouvirFixasPai() {
     unsubs.push(onSnapshot(collection(db, "grade"), snap => { gradePai = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderFixasPai(); }, err => console.error(err)));
     unsubs.push(onSnapshot(query(collection(db, "matriculas"), where("id_responsavel", "==", currentUserData.uid)), snap => { matPai = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderFixasPai(); }, err => console.error(err)));
 }
+function historicoFaltas() {
+    if (!faltasPai.length) return '';
+    const l = faltasPai.slice().sort((a, b) => b.data.localeCompare(a.data)).slice(0, 10);
+    return `<details class="hist-f"><summary>📜 Histórico de faltas (${faltasPai.length})</summary>${l.map(f => `<div class="falta-linha"><span>${esc(f.nome_crianca)} · ${fmtData(f.data)}</span><span class="pill ${PILL_CLS[sit(f)]}">${pillCurto(sit(f))}</span></div>`).join('')}</details>`;
+}
 function renderFixasPai() {
     const el = $('minhas-fixas');
     if (!el) return;
     const itens = matPai.map(m => ({ m, g: gradePai.find(x => x.id === m.id_turma) })).filter(i => i.g)
         .sort((a, b) => a.m.nome_crianca.localeCompare(b.m.nome_crianca) || a.g.horario.localeCompare(b.g.horario));
     el.innerHTML = itens.length ? `<div class="card"><h2 style="font-size:18px;">📌 Aulas fixas</h2>
-        <p style="font-size:12px; color:#666; margin-bottom:10px;">ℹ️ Avise a falta com pelo menos <b>24 horas</b> de antecedência para ter direito à reposição. Em caso de doença, anexe o atestado.</p>
-        ${itens.map(i => `<div class="class-card"><p>🏊‍♂️ <b>${esc(i.m.nome_crianca)}</b> <small>· ${creditos(i.m.nome_crianca)} reposição(ões) disponível(is)</small></p><p>${nomeDias(i.m.dias)} · <b>${i.g.horario}</b> · ${esc(i.g.nome || TIPOS[i.g.tipo])}</p>${i.g.professora ? `<p><small>${esc(i.g.professora)}</small></p>` : ''}${linhasFalta(i)}</div>`).join('')}</div>` : '';
+        <p class="aviso-regra">ℹ️ ${regraTxt()}</p>
+        ${itens.map(i => {
+            const nome = i.m.nome_crianca, c = creditos(nome), an = faltasPai.filter(f => f.nome_crianca === nome && sit(f) === 'analise').length;
+            return `<div class="class-card"><p>🏊‍♂️ <b>${esc(nome)}</b></p>
+                <div class="resumo-filho"><span class="pill${c > 0 ? ' ok' : ''}">🔁 ${c} reposição(ões)</span>${an ? `<span class="pill an">🩺 ${an} em análise</span>` : ''}</div>
+                <p>${nomeDias(i.m.dias)} · <b>${i.g.horario}</b> · ${esc(i.g.nome || TIPOS[i.g.tipo])}</p>${i.g.professora ? `<p><small>${esc(i.g.professora)}</small></p>` : ''}${linhasFalta(i)}</div>`;
+        }).join('')}
+        ${historicoFaltas()}</div>` : '';
 }
 
 // ----- calendário: aulas fixas do dia
@@ -1029,18 +1043,32 @@ window.trocarSenha = async function() {
 // ===== FALTAS AVISADAS PELOS PAIS (24h) E ATESTADO =====
 // exigirCreditoParaReposicao: o responsável só agenda reposição se o filho tiver falta com direito.
 // inicio: agendamentos feitos antes dessa data não gastam crédito.
-const CONTROLE = { exigirCreditoParaReposicao: true, inicio: '2026-10-11' };
+// atestado: 'sempre' = TODA falta precisa de atestado aprovado para dar direito à reposição;
+//           'menos24h' = só as faltas avisadas com menos de 24 horas precisam de atestado.
+const CONTROLE = { exigirCreditoParaReposicao: true, inicio: '2026-10-11', atestado: 'sempre' };
 const INICIO_MS = new Date(CONTROLE.inicio + 'T00:00:00').getTime();
 const msTs = v => v?.toMillis ? v.toMillis() : Number(v) || 0;
-let faltasPai = [], agsPai = [], atestadoAtual = null;
+let faltasPai = [], agsPai = [], atestadoAtual = null, faltaAtual = null;
 // 'direito' | 'analise' | 'sem'
 const sit = f => {
     if (f.origem !== 'pai') return 'direito';
     if (f.atestado_status === 'aprovado') return 'direito';
     if (f.atestado_status === 'recusado') return 'sem';
     if (f.atestado) return 'analise';
+    if (CONTROLE.atestado === 'sempre') return 'sem';
     return new Date(`${f.data}T${f.horario || '00:00'}:00`).getTime() - msTs(f.criado_em) >= 86400000 ? 'direito' : 'sem';
 };
+const PILL_CLS = { direito: 'ok', analise: 'an', sem: 'no' };
+const pillCurto = st => st === 'direito' ? '✅ Com direito' : st === 'analise' ? '🩺 Em análise' : '❌ Sem direito';
+const pillTxt = f => {
+    const st = sit(f);
+    return st === 'direito' ? '✅ Falta com direito à reposição' : st === 'analise' ? '🩺 Atestado em análise'
+        : f.atestado_status === 'recusado' ? '❌ Atestado recusado pela escola'
+        : CONTROLE.atestado === 'sempre' ? '⚠️ Envie o atestado para ter direito à reposição' : '❌ Sem direito à reposição (menos de 24h)';
+};
+const regraTxt = () => CONTROLE.atestado === 'sempre'
+    ? 'Para ter direito à reposição, a falta precisa de <b>atestado</b>, que a escola analisa.'
+    : 'Avise a falta com pelo menos <b>24 horas</b> de antecedência para ter direito à reposição. Em cima da hora, só com <b>atestado</b>.';
 const creditos = nome => Math.max(0, faltasPai.filter(f => f.nome_crianca === nome && sit(f) === 'direito').length - agsPai.filter(a => a.nome_crianca === nome && msTs(a.criado_em) >= INICIO_MS).length);
 
 function ouvirFaltasPai() {
@@ -1062,23 +1090,45 @@ function proximasDatas(m, g, n = 4) {
 function linhasFalta(i) {
     return proximasDatas(i.m, i.g).map(iso => {
         const f = faltasPai.find(x => x.id_turma === i.g.id && x.data === iso && x.nome_crianca === i.m.nome_crianca);
-        const rot = `${DIAS[new Date(iso + 'T12:00:00').getDay()]} ${fmtData(iso).slice(0, 5)}`;
-        if (!f) return `<div class="occ"><span>${rot}</span><button class="mini-btn" style="background:#ef233c;" data-nome="${esc(i.m.nome_crianca)}" onclick="window.avisarFalta('${i.g.id}', '${iso}', this.dataset.nome)">Vou faltar</button></div>`;
-        const st = sit(f);
-        const txt = st === 'direito' ? '✅ Falta avisada · com direito à reposição' : st === 'analise' ? '🩺 Atestado em análise' : '❌ Sem direito à reposição (menos de 24h)';
-        const anexo = st === 'sem' && !f.atestado_status ? `<label class="mini-btn" style="background:var(--orange);">🩺 Atestado<input type="file" accept="image/*" hidden data-id="${f.id}" onchange="window.enviarAtestado(this)"></label>` : '';
-        return `<div class="occ"><span>${rot}<br><small>${txt}</small></span><span style="display:flex; gap:6px;">${anexo}<button class="mini-btn" style="background:#6c757d;" onclick="window.desfazerFalta('${f.id}')">Desfazer</button></span></div>`;
+        const dt = new Date(iso + 'T12:00:00'), st = f ? sit(f) : '';
+        const badge = `<div class="dia-badge"><b>${String(dt.getDate()).padStart(2, '0')}</b><small>${DIAS[dt.getDay()]}</small></div>`;
+        const nome = esc(i.m.nome_crianca);
+        let meio = `<small>🕒 ${i.g.horario}</small>`, acao = '';
+        if (!f) {
+            meio += '<small style="color:#666;">Presença prevista</small>';
+            acao = `<button class="mini-btn" style="background:#ef233c;" data-nome="${nome}" onclick="window.abrirFalta('${i.g.id}', '${iso}', this.dataset.nome)">Vou faltar</button>`;
+        } else {
+            meio += `<span class="pill ${PILL_CLS[st]}">${pillTxt(f)}</span>`;
+            if (st === 'sem' && !f.atestado_status) acao += `<label class="mini-btn" style="background:var(--orange);">🩺 Enviar atestado<input type="file" accept="image/*" hidden data-id="${f.id}" onchange="window.enviarAtestado(this)"></label>`;
+            acao += `<button class="mini-btn" style="background:#6c757d;" onclick="window.desfazerFalta('${f.id}')">Desfazer</button>`;
+        }
+        return `<div class="dia-card${f ? ' f-' + st : ''}">${badge}<div class="dia-meio">${meio}</div><div class="dia-acao">${acao}</div></div>`;
     }).join('');
 }
-window.avisarFalta = async function(idTurma, iso, crianca) {
+window.abrirFalta = (idTurma, iso, crianca) => {
     const g = gradePai.find(x => x.id === idTurma);
     if (!g) return;
     const resta = new Date(`${iso}T${g.horario}:00`).getTime() - Date.now();
     if (resta <= 0) return alert("Essa aula já começou.");
-    if (resta < 86400000 && !confirm("Faltam menos de 24 horas para a aula. Sem atestado, essa falta NÃO dá direito à reposição. Registrar mesmo assim? (Você poderá anexar o atestado depois.)")) return;
+    faltaAtual = { idTurma, iso, crianca, horario: g.horario };
+    $('mf-quem').textContent = `${crianca} · ${DIAS[new Date(iso + 'T12:00:00').getDay()]} ${fmtData(iso).slice(0, 5)} às ${g.horario}`;
+    $('mf-regra').innerHTML = CONTROLE.atestado === 'sempre'
+        ? '🩺 Para ter direito à reposição, esta falta precisa de <b>atestado</b>. Anexe agora ou depois, na própria aula.'
+        : resta >= 86400000 ? '✅ Você está avisando com mais de 24 horas: a falta <b>dá direito à reposição</b>.'
+        : '⚠️ Faltam menos de 24 horas: sem atestado, esta falta <b>não dá direito à reposição</b>. Anexe o atestado para a escola analisar.';
+    $('mf-arq').value = '';
+    $('modal-falta').style.display = 'flex';
+};
+window.fecharFalta = () => { $('modal-falta').style.display = 'none'; };
+window.confirmarFalta = async function() {
+    const { idTurma, iso, crianca, horario } = faltaAtual, arq = $('mf-arq').files[0];
+    if (new Date(`${iso}T${horario}:00`).getTime() <= Date.now()) return alert("Essa aula já começou.");
+    if (arq && !arq.type.startsWith('image/')) return alert("Envie uma foto ou print do atestado (imagem).");
     try {
-        await addDoc(collection(db, "faltas"), { id_responsavel: currentUserData.uid, nome_crianca: crianca, id_turma: idTurma, data: iso, mes: iso.slice(0, 7), horario: g.horario, origem: 'pai', criado_em: serverTimestamp() });
-        toast('✅ Falta avisada!');
+        const ref = await addDoc(collection(db, "faltas"), { id_responsavel: currentUserData.uid, nome_crianca: crianca, id_turma: idTurma, data: iso, mes: iso.slice(0, 7), horario, origem: 'pai', criado_em: serverTimestamp() });
+        if (arq) await updateDoc(ref, { atestado: await comprimirImagem(arq, 1300, 0.6), atestado_em: serverTimestamp() });
+        window.fecharFalta();
+        toast(arq ? '✅ Falta avisada com atestado! A escola vai analisar.' : '✅ Falta avisada!');
     } catch (e) { alert("Erro ao avisar a falta: " + (e.code || e.message)); }
 };
 window.enviarAtestado = async function(input) {
@@ -1317,7 +1367,7 @@ window.addEventListener('scroll', () => {
 
 // ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
 let ocupado = false;
-['avisarFalta', 'enviarAtestado', 'salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
+['confirmarFalta', 'enviarAtestado', 'salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
     const original = window[nome];
     window[nome] = async (...args) => {
         if (ocupado) return;
@@ -1503,6 +1553,26 @@ body.dona .so-dona { display:inline-block !important; }
 .occ { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-top:1px solid #eee; font-size:14px; }
 .prof-ck { display:inline-flex; gap:6px; align-items:center; margin:4px 14px 4px 0; font-size:15px; }
 .profs { margin:6px 0 8px; }
+.pill { display:inline-block; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:bold; background:#eceff1; color:#555; }
+.pill.ok { background:#e3f6ee; color:#1f7a6d; }
+.pill.an { background:#fff3cd; color:#8a6d00; }
+.pill.no { background:#fde8ea; color:#c1121f; }
+.dia-card { display:flex; align-items:center; gap:10px; padding:10px; margin-top:8px; border-radius:14px; background:#f7fbfd; border:1px solid #e1eef3; }
+.dia-card.f-direito { background:#f1faf6; border-color:#bfe6d6; }
+.dia-card.f-analise { background:#fffaf0; border-color:#f2dfa8; }
+.dia-card.f-sem { background:#fff5f6; border-color:#f5c6cb; }
+.dia-badge { min-width:46px; text-align:center; background:var(--primary); color:#fff; border-radius:10px; padding:6px 4px; }
+.dia-badge b { display:block; font-size:18px; }
+.dia-badge small { font-size:11px; }
+.dia-meio { flex:1; display:flex; flex-direction:column; align-items:flex-start; gap:3px; font-size:13px; }
+.dia-acao { display:flex; flex-direction:column; gap:6px; }
+.resumo-filho { display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 8px; }
+.aviso-regra { background:#eef7fb; border-radius:10px; padding:10px; font-size:13px; margin:6px 0 10px; }
+.falta-linha { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #eee; font-size:13px; }
+.falta-linha a { cursor:pointer; color:var(--primary); font-weight:bold; margin-left:8px; }
+.faltas-lista { margin-top:6px; }
+.hist-f { margin-top:12px; font-size:14px; }
+.hist-f summary { cursor:pointer; font-weight:bold; color:var(--dark); padding:6px 0; }
 </style>
 </head>
 <body>
@@ -1598,6 +1668,7 @@ body.dona .so-dona { display:inline-block !important; }
                         <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
                         <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarAlunos('pendentes')">⏳ Pendentes</button>
                         <button type="button" class="chip" data-f="pagos" onclick="window.filtrarAlunos('pagos')">✅ Pagos</button>
+                        <button type="button" class="chip" data-f="atestados" onclick="window.filtrarAlunos('atestados')">🩺 Atestados</button>
                         <button type="button" class="chip" data-f="atrasados" onclick="window.filtrarAlunos('atrasados')">⚠️ Atrasados</button>
                         <button type="button" class="chip" data-f="confirmar" onclick="window.filtrarAlunos('confirmar')">🟡 A confirmar</button>
                         <button type="button" class="chip" data-f="repor" onclick="window.filtrarAlunos('repor')">🔁 A repor</button>
@@ -1765,6 +1836,19 @@ body.dona .so-dona { display:inline-block !important; }
         <div style="display:flex; gap:10px;">
             <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharPlano()">Cancelar</button>
             <button type="button" class="btn-action" onclick="window.salvarPlano()">Salvar</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-falta" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">📅 Avisar falta</h2>
+        <p id="mf-quem" style="margin:6px 0; font-weight:bold;"></p>
+        <div id="mf-regra" class="aviso-regra"></div>
+        <div class="form-group" style="margin-top:12px;"><label>🩺 Atestado (foto ou print) — opcional agora</label><input type="file" id="mf-arq" accept="image/*"></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharFalta()">Cancelar</button>
+            <button type="button" class="btn-action" style="background:#ef233c;" onclick="window.confirmarFalta()">Avisar falta</button>
         </div>
     </div>
 </div>
