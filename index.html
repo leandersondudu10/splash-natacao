@@ -29,9 +29,10 @@ const auth = getAuth(app);
 // Segundo app só para criar contas de responsáveis sem desconectar a professora
 const authSec = getAuth(initializeApp(firebaseConfig, 'cadastro'));
 
-const ADMINS = { 'bruna@splash.com': 'Tia Bruna', 'auri@splash.com': 'Tia Auri' };
-const RESERVADOS = ['bruna', 'auri'];
-const DONA = 'bruna@splash.com'; // só ela cria contas de responsáveis e cadastra alunos
+// Administração (acesso total): a Tia Bruna, dona da escola, e o usuário admin. As outras professoras são cadastradas por elas no sistema.
+const ADMIN_EMAILS = { 'bruna@splash.com': 'Tia Bruna', 'admin@splash.com': 'Administrador' };
+let papel = 'responsavel', meuNome = '', profsAdmin = [];
+const RESERVADOS = ['bruna', 'admin'];
 // Dados da escola usados no aviso de privacidade. Preencha o contato (WhatsApp ou e-mail) para pedidos sobre dados.
 const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625' };
 // PIX para a mensalidade. Preencha a chave (obrigatório), o tipo (CPF, CNPJ, Telefone, E-mail ou Aleatória) e, se quiser, o valor.
@@ -61,7 +62,7 @@ window.addEventListener('pagehide', salvarVisita);
 onAuthStateChanged(auth, async (user) => {
     cancelarListeners();
     document.body.classList.toggle('logado', !!user);
-    document.body.classList.toggle('dona', user?.email === DONA);
+    document.body.classList.remove('dona');
     $('fab').style.display = 'none';
     if (!user) {
         $('login-screen').style.display = 'block';
@@ -74,9 +75,17 @@ onAuthStateChanged(auth, async (user) => {
     $('app-screen').style.display = 'block';
     if (registrando) return; // o cadastro chama iniciarPai() quando terminar de salvar o perfil
 
-    const prof = ADMINS[user.email];
-    if (prof) {
-        $('user-name-display').innerHTML = `🏊‍♀️ Painel da Professora <b>${prof}</b>`;
+    papel = 'responsavel'; meuNome = '';
+    if (ADMIN_EMAILS[user.email]) { papel = 'admin'; meuNome = ADMIN_EMAILS[user.email]; }
+    else {
+        try {
+            const ps = await getDoc(doc(db, "professoras", user.uid));
+            if (ps.exists() && ps.data().ativo !== false) { papel = 'professora'; meuNome = ps.data().nome || 'Professora'; }
+        } catch (e) { console.error(e); }
+    }
+    document.body.classList.toggle('dona', papel === 'admin');
+    if (papel !== 'responsavel') {
+        $('user-name-display').innerHTML = `${papel === 'admin' ? '🛠️ Administração' : '🏊‍♀️ Painel da Professora'} <b>${esc(meuNome)}</b>`;
         $('admin-panel').style.display = 'block';
         $('parent-panel').style.display = 'none';
         window.mudarAbaAdmin('admin-turmas');
@@ -85,8 +94,9 @@ onAuthStateChanged(auth, async (user) => {
         ouvirAgendamentosAdmin();
         ouvirAlunosAdmin();
         ouvirHistorico();
-        ouvirPlanos();
+        if (papel === 'admin') ouvirPlanos();
         ouvirGrade();
+        ouvirProfs();
     } else {
         iniciarPai(user);
     }
@@ -132,7 +142,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     $('form-nova-turma').onsubmit = async (e) => {
         e.preventDefault();
-        const prof = ADMINS[auth.currentUser?.email];
+        const prof = meuNome;
         if (!prof) return alert("Apenas professoras podem criar turmas.");
         if (editandoId) {
             const vagas = parseInt($('turma-vagas').value);
@@ -399,7 +409,7 @@ function ouvirAgendamentosAdmin() {
         if (!primeira) snap.docChanges().forEach(c => {
             if (c.type !== 'added') return;
             const a = c.doc.data(), i = infoAg(a);
-            if ((i.professora || '').includes(ADMINS[auth.currentUser?.email])) toast(`🔔 ${a.nome_responsavel} agendou ${a.nome_crianca} — ${fmtData(i.data)} às ${i.horario}`);
+            if ((i.professora || '').includes(meuNome)) toast(`🔔 ${a.nome_responsavel} agendou ${a.nome_crianca} — ${fmtData(i.data)} às ${i.horario}`);
         });
         primeira = false;
         renderAtividade();
@@ -416,7 +426,7 @@ function ouvirAgendamentosAdmin() {
 function renderAtividade() {
     const el = $('lista-atividade');
     if (!el) return;
-    const minha = ADMINS[auth.currentUser?.email];
+    const minha = meuNome;
     const itens = agsAdmin.map(a => ({ a, ...infoAg(a) }));
     const ehNovo = i => i.a.criado_em > vistoAdmin && (i.professora || '').includes(minha);
     const n = itens.filter(ehNovo).length;
@@ -502,6 +512,7 @@ const nomeMes = m => `${MESES[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;
 function ouvirAlunosAdmin() {
     const erro = err => { console.error(err); const el = $('lista-alunos-admin'); if (el) el.innerHTML = `<p class="card erro">Erro ao carregar (${esc(err.code)}). Confira as regras do Firestore.</p>`; };
     unsubs.push(onSnapshot(collection(db, "responsaveis"), snap => { respAdmin = snap.docs.map(d => ({ uid: d.id, ...d.data() })); renderAlunos(); }, erro));
+    if (papel !== 'admin') return; // faltas e mensalidades: só a administração
     let primeiraF = true;
     unsubs.push(onSnapshot(collection(db, "faltas"), snap => {
         faltasAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -604,7 +615,7 @@ window.alternarPagamento = async function(uid, crianca) {
     if (statusMens(mensAdmin[id]) !== 'pago') return abrirConfirmacao(uid, crianca);
     if (!confirm("Desmarcar este pagamento?")) return;
     try {
-        await setDoc(doc(db, "mensalidades", id), { id_responsavel: uid, nome_crianca: crianca, mes: mesAl, status: 'pendente', pago: false, atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || '' }, { merge: true });
+        await setDoc(doc(db, "mensalidades", id), { id_responsavel: uid, nome_crianca: crianca, mes: mesAl, status: 'pendente', pago: false, atualizado_em: Date.now(), marcado_por: meuNome || '' }, { merge: true });
     } catch (e) { alert("Erro ao salvar: " + (e.code || e.message)); }
 };
 function abrirConfirmacao(uid, crianca) {
@@ -623,7 +634,7 @@ window.confirmarPgto = async function() {
         await setDoc(doc(db, "mensalidades", idMens(uid, crianca, mesAl)), {
             id_responsavel: uid, nome_crianca: crianca, mes: mesAl, status: 'pago', pago: true,
             valor: Number(String($('pg-valor').value).replace(',', '.')) || 0, pago_em: $('pg-data').value || hojeISO(), forma: $('pg-forma').value,
-            atualizado_em: Date.now(), marcado_por: ADMINS[auth.currentUser?.email] || ''
+            atualizado_em: Date.now(), marcado_por: meuNome || ''
         }, { merge: true });
         window.fecharModalPgto();
     } catch (e) { alert("Erro ao confirmar: " + (e.code || e.message)); }
@@ -664,7 +675,7 @@ window.verComprovante = (uid, crianca) => {
 window.registrarFalta = async function(uid, crianca, data) {
     if (!data) return alert("Escolha a data da falta.");
     try {
-        await addDoc(collection(db, "faltas"), { id_responsavel: uid, nome_crianca: crianca, data, mes: data.slice(0, 7), registrado_por: ADMINS[auth.currentUser?.email] || '', criado_em: Date.now() });
+        await addDoc(collection(db, "faltas"), { id_responsavel: uid, nome_crianca: crianca, data, mes: data.slice(0, 7), registrado_por: meuNome || '', criado_em: Date.now() });
     } catch (e) { alert("Erro ao registrar falta: " + (e.code || e.message)); }
 };
 window.removerFalta = async function(id) {
@@ -794,7 +805,7 @@ function renderGrade() {
         html += `<div class="class-card" style="border-left:6px solid ${COR_PROF[g.professora] || '#00b4d8'};">
             <p><b>${g.horario}</b> · ${esc(g.nome || TIPOS[g.tipo])}${faixa(g) ? ' · ' + faixa(g) : ''}</p>
             <p><small>👥 ${g.dias.map(d => `${DIAS[d]} ${ocupDia(g, d)}/${g.capacidade}`).join(' · ')}</small></p>
-            <div class="profs">${['Tia Bruna', 'Tia Auri'].map(pr => `<label class="prof-ck"><input type="checkbox" data-prof="${pr}"${(g.professora || '').includes(pr) ? ' checked' : ''} onchange="window.trocarProfs('${g.id}', this)"> ${pr}</label>`).join('')}${g.professora ? '' : '<small style="color:#888;">a definir</small>'}</div>
+            <div class="profs">${nomesProfs().map(pr => `<label class="prof-ck"><input type="checkbox" data-prof="${esc(pr)}"${profsDe(g.professora).includes(pr) ? ' checked' : ''} onchange="window.trocarProfs('${g.id}', this)"> ${pr}</label>`).join('')}${g.professora ? '' : '<small style="color:#888;">a definir</small>'}</div>
             <div>${ms.map(m => `<span class="chip-falta" style="background:#e3f6fb;">${esc(m.nome_crianca)}${m.dias.length < g.dias.length ? ' (' + nomeDias(m.dias) + ')' : ''} <a onclick="window.removerMatricula('${m.id}')">✕</a></span>`).join('') || '<small style="color:#888;">Nenhum aluno ainda.</small>'}</div>
             <button class="btn-action" style="margin-top:10px; padding:11px;" onclick="window.abrirMatricula('${g.id}')">➕ Incluir aluno</button>
         </div>`;
@@ -1160,6 +1171,70 @@ window.decidirAtestado = async function(status) {
     } catch (e) { alert("Erro: " + (e.code || e.message)); }
 };
 
+// ===== PROFESSORAS (cadastradas pela administração) =====
+const PALETA = ['#2a9d8f', '#e76f51', '#8338ec', '#d90368', '#3a86ff', '#fb8500'];
+const nomesProfs = () => ['Tia Bruna', ...profsAdmin.filter(x => x.ativo !== false).map(x => x.nome)].filter((n, i, a) => n && a.indexOf(n) === i);
+const profsDe = str => (str || '').split(' e ').filter(Boolean);
+function ouvirProfs() {
+    renderProfsForm();
+    unsubs.push(onSnapshot(collection(db, "professoras"), snap => {
+        profsAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        profsAdmin.forEach((x, i) => { if (!COR_PROF[x.nome]) COR_PROF[x.nome] = PALETA[i % PALETA.length]; });
+        renderProfsForm(); renderGrade(); renderCalendario(); renderListaProfs();
+    }, err => console.error(err)));
+}
+function renderProfsForm() {
+    const box = $('tp-box');
+    if (box) {
+        const marc = new Set([...box.querySelectorAll('input:checked')].map(i => i.dataset.prof));
+        box.innerHTML = nomesProfs().map(n => `<label class="prof-ck"><input type="checkbox" data-prof="${esc(n)}"${marc.has(n) ? ' checked' : ''}> ${esc(n)}</label>`).join('');
+    }
+    const leg = $('cal-leg');
+    if (leg) leg.innerHTML = nomesProfs().map(n => `<span style="color:${COR_PROF[n] || '#888'}">●</span> ${esc(n)}`).join(' &nbsp; ');
+}
+function renderListaProfs() {
+    const el = $('lista-profs');
+    if (!el) return;
+    el.innerHTML = profsAdmin.length
+        ? profsAdmin.map(x => `<div class="falta-linha"><span>👩‍🏫 <b>${esc(x.nome)}</b> <small>${esc(x.email || x.usuario || '')}</small></span><a onclick="window.removerProf('${x.id}')">Remover</a></div>`).join('')
+        : '<small style="color:#888;">Nenhuma professora cadastrada ainda.</small>';
+}
+window.abrirProf = () => {
+    ['pf-nome', 'pf-user', 'pf-email'].forEach(id => { $(id).value = ''; });
+    $('pf-user').dataset.manual = '';
+    $('pf-senha').value = `splash${Math.floor(1000 + Math.random() * 9000)}`;
+    $('pf-resultado').innerHTML = '';
+    renderListaProfs();
+    $('modal-prof').style.display = 'flex';
+};
+window.fecharProf = () => { $('modal-prof').style.display = 'none'; };
+window.sugerirUserProf = () => {
+    const u = $('pf-user');
+    if (!u.dataset.manual) u.value = slug(($('pf-nome').value.replace(/^tia\s+/i, '').trim().split(/\s+/)[0]) || '').replace(/-/g, '');
+};
+window.salvarProf = async function() {
+    const nome = $('pf-nome').value.trim(), email = $('pf-email').value.trim().toLowerCase(), usuario = $('pf-user').value.trim().toLowerCase(), senha = $('pf-senha').value;
+    if (!nome) return alert("Escreva o nome da professora (ex.: Tia Auri).");
+    if (!email && (!usuario || /\s/.test(usuario))) return alert("Escolha um usuário sem espaços (ou informe o e-mail).");
+    if (RESERVADOS.includes(usuario)) return alert("Esse usuário é reservado. Escolha outro.");
+    if (senha.length < 6) return alert("A senha precisa ter pelo menos 6 caracteres.");
+    let cred;
+    try {
+        cred = await createUserWithEmailAndPassword(authSec, email || `${usuario}@splash.com`, senha);
+        await signOut(authSec);
+    } catch (e) {
+        return alert(e.code === 'auth/email-already-in-use' ? "Esse usuário/e-mail já existe. Se for uma conta antiga, apague-a em Authentication → Users no Firebase e tente de novo." : "Erro ao criar o acesso: " + (e.code || e.message));
+    }
+    try {
+        await setDoc(doc(db, "professoras", cred.user.uid), { nome, usuario: email ? '' : usuario, email, ativo: true, criado_em: Date.now(), criado_por: auth.currentUser.email });
+    } catch (e) { return alert("O acesso foi criado, mas o cadastro não foi salvo (" + (e.code || e.message) + "). Confira as regras do Firebase."); }
+    $('pf-resultado').innerHTML = `<div class="card" style="background:#e8f8f1; margin-top:12px;"><p style="color:#2a9d8f; font-weight:bold;">✅ Professora cadastrada!</p><p>👤 <b>${esc(email || usuario)}</b></p><p>🔑 <b>${esc(senha)}</b></p><small>Anote agora: a senha não fica guardada no sistema.</small></div>`;
+};
+window.removerProf = async id => {
+    if (!confirm("Remover esta professora? Ela perde o acesso ao painel.")) return;
+    try { await deleteDoc(doc(db, "professoras", id)); } catch (e) { alert("Erro: " + (e.code || e.message)); }
+};
+
 // ===== EDITAR TURMA =====
 function resetarForm() {
     editandoId = null;
@@ -1183,9 +1258,9 @@ window.editarTurma = function(id) {
     window.mudarAbaAdmin('admin-nova');
 };
 window.cancelarEdicao = () => { resetarForm(); window.mudarAbaAdmin('admin-turmas'); };
-const profsForm = () => { const l = [$('tp-bruna').checked && 'Tia Bruna', $('tp-auri').checked && 'Tia Auri'].filter(Boolean); return l.length ? l.join(' e ') : (ADMINS[auth.currentUser?.email] || ''); };
-const setProfsForm = str => { $('tp-bruna').checked = (str || '').includes('Tia Bruna'); $('tp-auri').checked = (str || '').includes('Tia Auri'); };
-window.novaTurma = () => { if (editandoId) resetarForm(); if (!$('tp-bruna').checked && !$('tp-auri').checked) setProfsForm(ADMINS[auth.currentUser?.email]); window.mudarAbaAdmin('admin-nova'); };
+const profsForm = () => { const l = [...document.querySelectorAll('#tp-box input:checked')].map(i => i.dataset.prof); return l.length ? l.join(' e ') : (nomesProfs().includes(meuNome) ? meuNome : ''); };
+const setProfsForm = str => { const sel = profsDe(str); document.querySelectorAll('#tp-box input').forEach(i => { i.checked = sel.includes(i.dataset.prof); }); };
+window.novaTurma = () => { if (editandoId) resetarForm(); if (!document.querySelector('#tp-box input:checked')) setProfsForm(meuNome); window.mudarAbaAdmin('admin-nova'); };
 
 // ===== AVISO AOS PAIS (WhatsApp) =====
 async function abrirAviso(t) {
@@ -1367,7 +1442,7 @@ window.addEventListener('scroll', () => {
 
 // ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
 let ocupado = false;
-['confirmarFalta', 'enviarAtestado', 'salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
+['salvarProf', 'confirmarFalta', 'enviarAtestado', 'salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
     const original = window[nome];
     window[nome] = async (...args) => {
         if (ocupado) return;
@@ -1550,6 +1625,7 @@ button.chip-alu { cursor:pointer; }
 .dia-ck { display:inline-flex; gap:6px; align-items:center; margin-right:14px; font-size:16px; }
 .so-dona { display:none !important; }
 body.dona .so-dona { display:inline-block !important; }
+body.dona .nav-tab.so-dona { display:flex !important; }
 .occ { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-top:1px solid #eee; font-size:14px; }
 .prof-ck { display:inline-flex; gap:6px; align-items:center; margin:4px 14px 4px 0; font-size:15px; }
 .profs { margin:6px 0 8px; }
@@ -1618,14 +1694,14 @@ body.dona .so-dona { display:inline-block !important; }
                 <div class="nav-tab" data-aba="admin-historico" onclick="window.mudarAbaAdmin('admin-historico')"><span class="ico">📜</span><span class="rot">Histórico</span></div>
                 <div class="nav-tab" data-aba="admin-calendario" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Calendário</span></div>
                 <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')"><span class="ico">🔔</span><span class="rot">Atividade</span></div>
-                <div class="nav-tab" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">💰</span><span class="rot">Alunos</span></div>
+                <div class="nav-tab so-dona" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">💰</span><span class="rot">Alunos</span></div>
             </div>
             <div id="admin-nova" class="admin-section card" style="display:none;">
                 <h2 id="titulo-form-turma">Liberar Nova Turma</h2>
                 <form id="form-nova-turma">
                     <div class="form-group"><label>Data da Aula</label><input type="date" id="turma-data" required></div>
                     <div class="form-group"><label>Horário</label><input type="time" id="turma-horario" required></div>
-                        <div class="form-group"><label>Professora(s)</label><div><label class="prof-ck"><input type="checkbox" id="tp-bruna"> Tia Bruna</label><label class="prof-ck"><input type="checkbox" id="tp-auri"> Tia Auri</label></div></div>
+                        <div class="form-group"><label>Professora(s)</label><div id="tp-box"></div></div>
                     <div class="form-group">
                         <label>Nível da Turma</label>
                         <select id="turma-nivel" required>
@@ -1646,7 +1722,7 @@ body.dona .so-dona { display:inline-block !important; }
                     <button type="button" onclick="window.mudarMes(1)">›</button>
                 </div>
                 <div id="cal-corpo"></div>
-                <p style="font-size:12px; color:#555; margin-top:10px;"><span style="color:#0077be">●</span> Tia Bruna &nbsp; <span style="color:#ff9f1c">●</span> Tia Auri &nbsp; <span style="color:#2a9d8f; font-weight:bold;">✓ 3</span> já aconteceu (nº de alunos)</p>
+                <p style="font-size:12px; color:#555; margin-top:10px;"><span id="cal-leg"></span> &nbsp; <span style="color:#2a9d8f; font-weight:bold;">✓ 3</span> já aconteceu (nº de alunos)</p>
                 <div id="cal-dia-detalhe"></div>
             </div>
             <div id="admin-alunos" class="admin-section" style="display:none;">
@@ -1660,6 +1736,7 @@ body.dona .so-dona { display:inline-block !important; }
                     <div id="fin-resumo"></div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
                         <button type="button" class="mini-btn so-dona" style="background:var(--orange);" onclick="window.abrirCadastro()">➕ Novo cadastro</button>
+                        <button type="button" class="mini-btn so-dona" style="background:#8338ec;" onclick="window.abrirProf()">👩‍🏫 Professoras</button>
                         <button type="button" class="mini-btn so-dona" style="background:#e08600;" onclick="window.abrirAluno()">➕ Novo aluno</button>
                         <button type="button" class="mini-btn" style="background:#2a9d8f;" onclick="window.exportarCsv()">⬇️ Planilha do mês (CSV)</button>
                         <button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.exportarBackup()">💾 Backup completo</button>
@@ -1765,6 +1842,23 @@ body.dona .so-dona { display:inline-block !important; }
 <button id="fab" type="button" onclick="window.fabAcao()" aria-label="Liberar nova turma"><span class="fab-ico">➕</span><span class="fab-rot" id="fab-rot">Nova reposição</span></button>
 <div id="offline">📡 Sem internet. Suas ações serão enviadas quando a conexão voltar.</div>
 <div id="toast"></div>
+
+<div id="modal-prof" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <h2 style="color:var(--primary);">👩‍🏫 Professoras</h2>
+        <div id="lista-profs" style="margin-bottom:12px;"></div>
+        <p style="font-size:13px; color:#666; margin-bottom:8px;">Cadastrar nova professora (ela não vê a parte financeira):</p>
+        <div class="form-group"><label>Nome (como aparece nas turmas)</label><input type="text" id="pf-nome" maxlength="40" placeholder="ex: Tia Auri" oninput="window.sugerirUserProf()"></div>
+        <div class="form-group"><label>E-mail (opcional)</label><input type="email" id="pf-email" maxlength="80" autocapitalize="none"></div>
+        <div class="form-group"><label>Usuário (usado se não houver e-mail)</label><input type="text" id="pf-user" maxlength="30" autocapitalize="none" oninput="this.dataset.manual='1'"></div>
+        <div class="form-group"><label>Senha inicial</label><input type="text" id="pf-senha" maxlength="30" autocapitalize="none"></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharProf()">Fechar</button>
+            <button type="button" class="btn-action" onclick="window.salvarProf()">Cadastrar</button>
+        </div>
+        <div id="pf-resultado"></div>
+    </div>
+</div>
 
 <div id="modal-cadastro" class="modal-overlay">
     <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
