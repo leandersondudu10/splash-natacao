@@ -32,6 +32,7 @@ const authSec = getAuth(initializeApp(firebaseConfig, 'cadastro'));
 // Administração (acesso total): a Tia Bruna, dona da escola, e o usuário admin. As outras professoras são cadastradas por elas no sistema.
 const ADMIN_EMAILS = { 'bruna@splash.com': 'Tia Bruna', 'admin@splash.com': 'Administrador' };
 let papel = 'responsavel', meuNome = '', profsAdmin = [];
+const PROFESSORA_VE_ALUNOS = true; // true = a professora vê a aba Alunos (sem atestados, sem financeiro e sem cadastros)
 const RESERVADOS = ['bruna', 'admin'];
 // Dados da escola usados no aviso de privacidade. Preencha o contato (WhatsApp ou e-mail) para pedidos sobre dados.
 const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625' };
@@ -63,6 +64,7 @@ onAuthStateChanged(auth, async (user) => {
     cancelarListeners();
     document.body.classList.toggle('logado', !!user);
     document.body.classList.remove('dona');
+    document.body.classList.remove('ve-alunos');
     $('fab').style.display = 'none';
     if (!user) {
         $('login-screen').style.display = 'block';
@@ -84,6 +86,7 @@ onAuthStateChanged(auth, async (user) => {
         } catch (e) { console.error(e); }
     }
     document.body.classList.toggle('dona', papel === 'admin');
+    document.body.classList.toggle('ve-alunos', papel === 'admin' || (papel === 'professora' && PROFESSORA_VE_ALUNOS));
     if (papel !== 'responsavel') {
         $('user-name-display').innerHTML = `${papel === 'admin' ? '🛠️ Administração' : '🏊‍♀️ Painel da Professora'} <b>${esc(meuNome)}</b>`;
         $('admin-panel').style.display = 'block';
@@ -181,7 +184,7 @@ function trocarAba(painel, secao, abaId) {
     window.scrollTo({ top: 0 });
     document.querySelectorAll('.' + secao).forEach(el => el.style.display = 'none');
     $(abaId).style.display = 'block';
-    document.querySelectorAll(`#${painel} .nav-tab`).forEach(el => el.classList.toggle('active', el.dataset.aba === abaId));
+    document.querySelectorAll(`#${painel} .nav-tab`).forEach(el => el.classList.toggle('active', (el.dataset.abas || el.dataset.aba).split(',').includes(abaId)));
 }
 let abaAdmin = 'admin-turmas';
 window.mudarAbaAdmin = id => {
@@ -512,7 +515,6 @@ const nomeMes = m => `${MESES[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;
 function ouvirAlunosAdmin() {
     const erro = err => { console.error(err); const el = $('lista-alunos-admin'); if (el) el.innerHTML = `<p class="card erro">Erro ao carregar (${esc(err.code)}). Confira as regras do Firestore.</p>`; };
     unsubs.push(onSnapshot(collection(db, "responsaveis"), snap => { respAdmin = snap.docs.map(d => ({ uid: d.id, ...d.data() })); renderAlunos(); }, erro));
-    if (papel !== 'admin') return; // faltas e mensalidades: só a administração
     let primeiraF = true;
     unsubs.push(onSnapshot(collection(db, "faltas"), snap => {
         faltasAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -520,7 +522,7 @@ function ouvirAlunosAdmin() {
         primeiraF = false;
         renderAlunos();
     }, erro));
-    ouvirMensalidades();
+    if (papel === 'admin') ouvirMensalidades();
 }
 function ouvirMensalidades() {
     if (unsubMens) unsubMens();
@@ -544,25 +546,69 @@ function linkCobranca(p, c, f = {}) {
     return `<a class="mini-btn" style="background:#25d366; text-decoration:none;" href="https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">💬 Cobrar</a>`;
 }
 
-function renderAlunos() {
-    const el = $('lista-alunos-admin');
-    if (!el) return;
-    $('al-mes').textContent = nomeMes(mesAl);
-    const dados = respAdmin.flatMap(p => (p.criancas?.length ? p.criancas : (p.nome_crianca ? [p.nome_crianca] : [])).map(c => {
-        const fs = faltasAdmin.filter(f => f.id_responsavel === p.uid && f.nome_crianca === c).sort((x, y) => x.data.localeCompare(y.data));
-        const reps = agsAdmin.filter(a => a.id_responsavel === p.uid && a.nome_crianca === c && msTs(a.criado_em) >= INICIO_MS).length;
-        return { p, c, st: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]), m: mensAdmin[idMens(p.uid, c, mesAl)], f: infoMensal(planosAdmin[idPlano(p.uid, c)] || {}, mesAl, mensAdmin[idMens(p.uid, c, mesAl)]), pago: statusMens(mensAdmin[idMens(p.uid, c, mesAl)]) === 'pago', fs, reps, saldo: Math.max(0, fs.filter(f => sit(f) === 'direito').length - reps) };
-    })).sort((x, y) => x.c.localeCompare(y.c));
+let filtroFin = 'todos', buscaAl = '';
+function calcDados() {
+    const dados = respAdmin.flatMap(pp => criancasDe(pp).map(c => {
+        const fs = faltasAdmin.filter(f => f.id_responsavel === pp.uid && f.nome_crianca === c).sort((x, y) => x.data.localeCompare(y.data));
+        const reps = agsAdmin.filter(a => a.id_responsavel === pp.uid && a.nome_crianca === c && msTs(a.criado_em) >= INICIO_MS).length;
+        const m = mensAdmin[idMens(pp.uid, c, mesAl)];
+        const turmas = matAdmin.filter(x => x.id_responsavel === pp.uid && x.nome_crianca === c).map(x => ({ x, g: gradeAdmin.find(g => g.id === x.id_turma) })).filter(i => i.g);
+        return { p: pp, c, st: statusMens(m), m, f: infoMensal(planosAdmin[idPlano(pp.uid, c)] || {}, mesAl, m), pago: statusMens(m) === 'pago', fs, reps, saldo: Math.max(0, fs.filter(f => sit(f) === 'direito').length - reps), turmas };
+    }));
     const vistos = new Set(dados.map(d => idMens(d.p.uid, d.c, mesAl)));
     Object.entries(mensAdmin).forEach(([id, m]) => {
         if (vistos.has(id)) return;
-        const p = respAdmin.find(r => r.uid === m.id_responsavel) || { uid: m.id_responsavel, nome_responsavel: 'Responsável (perfil não encontrado)', telefone: '' };
-        dados.push({ p, c: m.nome_crianca, st: statusMens(m), m, f: infoMensal(planosAdmin[idPlano(p.uid, m.nome_crianca)] || {}, mesAl, m), pago: statusMens(m) === 'pago', fs: [], reps: 0, saldo: 0 });
+        const pp = respAdmin.find(r => r.uid === m.id_responsavel) || { uid: m.id_responsavel, nome_responsavel: 'Responsável (perfil não encontrado)', telefone: '' };
+        dados.push({ p: pp, c: m.nome_crianca, st: statusMens(m), m, f: infoMensal(planosAdmin[idPlano(pp.uid, m.nome_crianca)] || {}, mesAl, m), pago: statusMens(m) === 'pago', fs: [], reps: 0, saldo: 0, turmas: [], orfao: true });
     });
-    dados.sort((x, y) => x.c.localeCompare(y.c));
-    dadosAl = dados;
-    const pagos = dados.filter(d => d.pago).length;
-    $('al-resumo').innerHTML = `✅ ${pagos} pagos · 🟡 ${dados.filter(d => d.st === 'informado').length} a confirmar · ⏳ ${dados.filter(d => d.st === 'pendente').length} pendentes · 🔁 ${dados.filter(d => d.saldo > 0).length} com reposição a fazer · 📄 ${Object.keys(mensAdmin).length} registro(s) de pagamento neste mês`;
+    return dados.sort((x, y) => x.c.localeCompare(y.c));
+}
+function renderAlunos() {
+    dadosAl = calcDados();
+    renderListaAlunos(dadosAl.filter(d => !d.orfao));
+    renderFinanceiro(dadosAl);
+}
+
+// ----- tela ALUNOS (professoras veem sem atestados, cadastros e dinheiro)
+function renderListaAlunos(dados) {
+    const el = $('lista-alunos-admin');
+    if (!el) return;
+    const adm = papel === 'admin';
+    const nAt = dados.reduce((n, d) => n + d.fs.filter(f => sit(f) === 'analise').length, 0);
+    const aba = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
+    if (aba) aba.dataset.badge = adm ? (nAt || '') : '';
+    const chipAt = document.querySelector('#admin-alunos .chip[data-f="atestados"]');
+    if (chipAt) chipAt.textContent = nAt ? `🩺 Atestados (${nAt})` : '🩺 Atestados';
+    document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
+    $('al-total').textContent = `${dados.length} aluno(s) cadastrado(s)`;
+    const q = slug(buscaAl.trim());
+    const lista = dados.filter(d => (filtroAl === 'todos' || (filtroAl === 'atestados' && d.fs.some(f => sit(f) === 'analise')) || (filtroAl === 'repor' && d.saldo > 0) || (filtroAl === 'semturma' && !d.turmas.length))
+        && (!q || slug(d.c).includes(q) || slug(d.p.nome_responsavel || '').includes(q)));
+    el.innerHTML = lista.length ? lista.map(d => {
+        const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`, nasc = d.p.nascimentos?.[d.c];
+        const emAnalise = d.fs.some(f => sit(f) === 'analise');
+        return `<div class="class-card" style="border-left:6px solid ${emAnalise && adm ? '#f2b705' : '#00b4d8'};">
+            <p>🏊‍♂️ <b>${esc(d.c)}</b> <small>· ${nasc ? idadeDe(nasc) + ' anos' : 'sem data de nascimento'}</small></p>
+            <p><small>Resp: ${esc(d.p.nome_responsavel)} · 📞 ${esc(d.p.telefone || 'N/A')}</small></p>
+            <div>${d.turmas.length ? d.turmas.map(i => `<span class="chip-falta" style="background:#e3f6fb;">📌 ${nomeDias(i.x.dias)} ${i.g.horario}</span>`).join('') : '<small style="color:#888;">Sem turma fixa</small>'}</div>
+            <p style="margin-top:6px;"><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
+            <div class="faltas-lista">${d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + f.horario : ''}${f.origem === 'pai' ? ' · pai' : ''}</span>${adm ? `<span>${(f.atestado || f.tem_atestado) ? `<a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span>` : ''}</div>`; }).join('')}</div>
+            ${adm ? `<div style="display:flex; gap:8px; margin-top:8px;">
+                <input type="date" value="${hojeISO()}" style="flex:1; padding:8px; border:2px solid #e0e0e0; border-radius:8px;">
+                <button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>
+                <button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
+            </div>` : ''}
+        </div>`;
+    }).join('') : '<p class="card" style="text-align:center;">Nenhum aluno encontrado.</p>';
+}
+
+// ----- tela FINANCEIRO (só administração)
+function renderFinanceiro(dados) {
+    const el = $('lista-fin');
+    if (!el) return;
+    $('al-mes').textContent = nomeMes(mesAl);
+    const pagos = dados.filter(d => d.pago).length, nConf = dados.filter(d => d.st === 'informado').length;
+    $('al-resumo').innerHTML = `✅ ${pagos} pagos · 🟡 ${nConf} a confirmar · ⏳ ${dados.filter(d => d.st === 'pendente').length} pendentes · 📄 ${Object.keys(mensAdmin).length} registro(s) no mês`;
     const esperado = dados.reduce((n, d) => n + d.f.valor, 0);
     const recebido = dados.filter(d => d.pago).reduce((n, d) => n + (d.m?.valor || d.f.valor), 0);
     const atrasado = dados.filter(d => d.f.dias > 0).reduce((n, d) => n + d.f.valor, 0);
@@ -570,34 +616,22 @@ function renderAlunos() {
     $('fin-resumo').innerHTML = esperado || recebido
         ? `<div class="fin-grid"><div><small>Esperado</small><b>${reais(esperado)}</b></div><div><small>Recebido</small><b style="color:#2a9d8f;">${reais(recebido)}</b></div><div><small>A receber</small><b>${reais(Math.max(0, esperado - recebido))}</b></div><div><small>Atrasado</small><b style="color:#c1121f;">${reais(atrasado)}</b></div></div><div class="barra"><i style="width:${pct}%"></i></div><p style="text-align:center; font-size:12px; margin-top:4px;">${pct}% recebido</p>`
         : '<p style="text-align:center; font-size:13px; color:#666;">Defina o valor da mensalidade em ⚙️ Plano de cada aluno para ver o resumo financeiro.</p>';
-    const nConf = dados.filter(d => d.st === 'informado').length;
-    const abaAl = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
-    const nAt = dados.reduce((n, d) => n + d.fs.filter(f => sit(f) === 'analise').length, 0);
-    if (abaAl) abaAl.dataset.badge = (nConf + nAt) || '';
-    const chipAt = document.querySelector('#admin-alunos .chip[data-f="atestados"]');
-    if (chipAt) chipAt.textContent = nAt ? `🩺 Atestados (${nAt})` : '🩺 Atestados';
-    document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
-    const lista = dados.filter(d => filtroAl === 'todos' || (filtroAl === 'pendentes' && d.st !== 'pago') || (filtroAl === 'pagos' && d.pago) || (filtroAl === 'confirmar' && d.st === 'informado') || (filtroAl === 'atestados' && d.fs.some(f => sit(f) === 'analise')) || (filtroAl === 'atrasados' && d.f.dias > 0) || (filtroAl === 'repor' && d.saldo > 0));
+    const aba = document.querySelector('#admin-panel .nav-tab[data-aba="admin-financeiro"]');
+    if (aba) aba.dataset.badge = nConf || '';
+    document.querySelectorAll('#admin-financeiro .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroFin));
+    const lista = dados.filter(d => filtroFin === 'todos' || (filtroFin === 'pendentes' && d.st !== 'pago') || (filtroFin === 'pagos' && d.pago) || (filtroFin === 'confirmar' && d.st === 'informado') || (filtroFin === 'atrasados' && d.f.dias > 0));
     el.innerHTML = lista.length ? lista.map(d => {
         const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`;
-        return `
-        <div class="class-card" style="border-left:6px solid ${d.pago ? '#2a9d8f' : d.f.dias > 0 ? '#c1121f' : '#ff9f1c'};">
+        return `<div class="class-card" style="border-left:6px solid ${d.pago ? '#2a9d8f' : d.f.dias > 0 ? '#c1121f' : '#ff9f1c'};">
             <p>🏊‍♂️ <b>${esc(d.c)}</b></p>
             <p><small>Resp: ${esc(d.p.nome_responsavel)} · 📞 ${esc(d.p.telefone || 'N/A')}</small></p>
             <p style="margin-top:6px;">${linhaFin(d)}</p>
-            <p><small>🎂 ${d.p.nascimentos?.[d.c] ? fmtData(d.p.nascimentos[d.c]) + ' (' + idadeDe(d.p.nascimentos[d.c]) + ' anos)' : 'sem data de nascimento'}</small></p>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;">
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0;">
                 ${d.st === 'informado'
                     ? `<button class="mini-btn" style="background:#2a9d8f;" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">✅ Confirmar pagamento</button><button class="mini-btn" style="background:#c1121f;" ${at} onclick="window.recusarPagamento(this.dataset.uid, this.dataset.nome)">↩ Recusar</button>`
                     : `<button class="mini-btn" style="background:${d.pago ? '#2a9d8f' : '#ff9f1c'};" ${at} onclick="window.alternarPagamento(this.dataset.uid, this.dataset.nome)">${d.pago ? '✅ Pago' : '⏳ Pendente'}</button>`}
                 ${d.m?.comprovante ? `<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.verComprovante(this.dataset.uid, this.dataset.nome)">🧾 Comprovante</button>` : ''}
-                ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button><button class="mini-btn so-dona" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
-            </div>
-            <p><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
-            <div class="faltas-lista">${d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + f.horario : ''}${f.origem === 'pai' ? ' · pai' : ''}</span><span>${f.atestado ? `<a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span></div>`; }).join('')}</div>
-            <div style="display:flex; gap:8px; margin-top:8px;">
-                <input type="date" value="${hojeISO()}" style="flex:1; padding:8px; border:2px solid #e0e0e0; border-radius:8px;">
-                <button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>
+                ${d.st === 'pendente' ? linkCobranca(d.p, d.c, d.f) : ''}${d.pago ? linkRecibo(d) : ''}<button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirPlano(this.dataset.uid, this.dataset.nome)">⚙️ Plano</button>
             </div>
         </div>`;
     }).join('') : '<p class="card" style="text-align:center;">Nenhum aluno encontrado.</p>';
@@ -610,6 +644,8 @@ window.mudarMesAl = delta => {
     renderAlunos();
 };
 window.filtrarAlunos = f => { filtroAl = f; renderAlunos(); };
+window.filtrarFin = f => { filtroFin = f; renderAlunos(); };
+window.buscarAluno = v => { buscaAl = v; renderAlunos(); };
 window.alternarPagamento = async function(uid, crianca) {
     const id = idMens(uid, crianca, mesAl);
     if (statusMens(mensAdmin[id]) !== 'pago') return abrirConfirmacao(uid, crianca);
@@ -1065,7 +1101,7 @@ const sit = f => {
     if (f.origem !== 'pai') return 'direito';
     if (f.atestado_status === 'aprovado') return 'direito';
     if (f.atestado_status === 'recusado') return 'sem';
-    if (f.atestado) return 'analise';
+    if (f.atestado || f.tem_atestado) return 'analise';
     if (CONTROLE.atestado === 'sempre') return 'sem';
     return new Date(`${f.data}T${f.horario || '00:00'}:00`).getTime() - msTs(f.criado_em) >= 86400000 ? 'direito' : 'sem';
 };
@@ -1137,17 +1173,22 @@ window.confirmarFalta = async function() {
     if (arq && !arq.type.startsWith('image/')) return alert("Envie uma foto ou print do atestado (imagem).");
     try {
         const ref = await addDoc(collection(db, "faltas"), { id_responsavel: currentUserData.uid, nome_crianca: crianca, id_turma: idTurma, data: iso, mes: iso.slice(0, 7), horario, origem: 'pai', criado_em: serverTimestamp() });
-        if (arq) await updateDoc(ref, { atestado: await comprimirImagem(arq, 1300, 0.6), atestado_em: serverTimestamp() });
+        if (arq) await anexarAtestado(ref.id, arq, crianca);
         window.fecharFalta();
         toast(arq ? '✅ Falta avisada com atestado! A escola vai analisar.' : '✅ Falta avisada!');
     } catch (e) { alert("Erro ao avisar a falta: " + (e.code || e.message)); }
 };
+async function anexarAtestado(faltaId, arquivo, nome = '') {
+    const imagem = await comprimirImagem(arquivo, 1300, 0.6);
+    await setDoc(doc(db, "atestados", faltaId), { id_responsavel: currentUserData.uid, nome_crianca: nome || faltasPai.find(x => x.id === faltaId)?.nome_crianca || '', imagem, enviado_em: serverTimestamp() });
+    await updateDoc(doc(db, "faltas", faltaId), { tem_atestado: true, atestado_em: serverTimestamp() });
+}
 window.enviarAtestado = async function(input) {
     const f = input.files[0];
     if (!f) return;
     if (!f.type.startsWith('image/')) { input.value = ''; return alert("Envie uma foto ou print do atestado (imagem)."); }
     try {
-        await updateDoc(doc(db, "faltas", input.dataset.id), { atestado: await comprimirImagem(f, 1300, 0.6), atestado_em: serverTimestamp() });
+        await anexarAtestado(input.dataset.id, f);
         toast('🩺 Atestado enviado! A escola vai analisar.');
     } catch (e) { alert("Erro ao enviar o atestado: " + (e.code || e.message)); }
     input.value = '';
@@ -1156,11 +1197,17 @@ window.desfazerFalta = async function(id) {
     if (!confirm("Desfazer o aviso de falta?")) return;
     try { await deleteDoc(doc(db, "faltas", id)); } catch (e) { alert("Erro: " + (e.code || e.message)); }
 };
-window.verAtestado = id => {
+window.verAtestado = async id => {
     const f = faltasAdmin.find(x => x.id === id);
-    if (!f?.atestado) return;
+    if (!f) return;
+    let img = f.atestado;
+    if (!img) {
+        try { img = (await getDoc(doc(db, "atestados", id))).data()?.imagem; }
+        catch (e) { return alert("Erro ao abrir o atestado: " + (e.code || e.message)); }
+    }
+    if (!img) return alert("Atestado não encontrado.");
     atestadoAtual = id;
-    $('at-img').src = f.atestado;
+    $('at-img').src = img;
     $('at-info').textContent = `${f.nome_crianca} · falta de ${fmtData(f.data)}${f.atestado_status ? ' · ' + (f.atestado_status === 'aprovado' ? '✅ aprovado' : '❌ recusado') : ''}`;
     $('modal-atestado').style.display = 'flex';
 };
@@ -1626,6 +1673,8 @@ button.chip-alu { cursor:pointer; }
 .so-dona { display:none !important; }
 body.dona .so-dona { display:inline-block !important; }
 body.dona .nav-tab.so-dona { display:flex !important; }
+.nav-tab.so-alunos { display:none !important; }
+body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
 .occ { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-top:1px solid #eee; font-size:14px; }
 .prof-ck { display:inline-flex; gap:6px; align-items:center; margin:4px 14px 4px 0; font-size:15px; }
 .profs { margin:6px 0 8px; }
@@ -1691,10 +1740,11 @@ body.dona .nav-tab.so-dona { display:flex !important; }
         <div id="admin-panel" style="display:none;">
             <div class="nav-tabs">
                 <div class="nav-tab active" data-aba="admin-turmas" onclick="window.mudarAbaAdmin('admin-turmas')"><span class="ico">📅</span><span class="rot">Turmas</span></div>
-                <div class="nav-tab" data-aba="admin-historico" onclick="window.mudarAbaAdmin('admin-historico')"><span class="ico">📜</span><span class="rot">Histórico</span></div>
-                <div class="nav-tab" data-aba="admin-calendario" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Calendário</span></div>
+                
+                <div class="nav-tab" data-aba="admin-calendario" data-abas="admin-calendario,admin-historico" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Agenda</span></div>
                 <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')"><span class="ico">🔔</span><span class="rot">Atividade</span></div>
-                <div class="nav-tab so-dona" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">💰</span><span class="rot">Alunos</span></div>
+                <div class="nav-tab so-alunos" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">👥</span><span class="rot">Alunos</span></div>
+                <div class="nav-tab so-dona" data-aba="admin-financeiro" onclick="window.mudarAbaAdmin('admin-financeiro')"><span class="ico">💰</span><span class="rot">Financeiro</span></div>
             </div>
             <div id="admin-nova" class="admin-section card" style="display:none;">
                 <h2 id="titulo-form-turma">Liberar Nova Turma</h2>
@@ -1716,6 +1766,7 @@ body.dona .nav-tab.so-dona { display:flex !important; }
                 </form>
             </div>
             <div id="admin-calendario" class="admin-section card" style="display:none;">
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button></div>
                 <div class="cal-head">
                     <button type="button" onclick="window.mudarMes(-1)">‹</button>
                     <h2 id="cal-titulo" style="margin:0;"></h2>
@@ -1727,6 +1778,25 @@ body.dona .nav-tab.so-dona { display:flex !important; }
             </div>
             <div id="admin-alunos" class="admin-section" style="display:none;">
                 <div class="card">
+                    <h2 style="font-size:18px; margin-bottom:4px;">👥 Alunos</h2>
+                    <p id="al-total" style="text-align:center; font-size:13px; color:#666; margin-bottom:8px;"></p>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                        <button type="button" class="mini-btn so-dona" style="background:var(--orange);" onclick="window.abrirCadastro()">➕ Novo cadastro</button>
+                        <button type="button" class="mini-btn so-dona" style="background:#e08600;" onclick="window.abrirAluno()">➕ Novo aluno</button>
+                        <button type="button" class="mini-btn so-dona" style="background:#8338ec;" onclick="window.abrirProf()">👩‍🏫 Professoras</button>
+                    </div>
+                    <input type="search" placeholder="🔍 Buscar aluno ou responsável" oninput="window.buscarAluno(this.value)" style="width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px; margin-bottom:8px;">
+                    <div class="chips">
+                        <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
+                        <button type="button" class="chip so-dona" data-f="atestados" onclick="window.filtrarAlunos('atestados')">🩺 Atestados</button>
+                        <button type="button" class="chip" data-f="repor" onclick="window.filtrarAlunos('repor')">🔁 A repor</button>
+                        <button type="button" class="chip" data-f="semturma" onclick="window.filtrarAlunos('semturma')">📌 Sem turma</button>
+                    </div>
+                </div>
+                <div id="lista-alunos-admin">Carregando...</div>
+            </div>
+            <div id="admin-financeiro" class="admin-section" style="display:none;">
+                <div class="card">
                     <div class="cal-head">
                         <button type="button" onclick="window.mudarMesAl(-1)">‹</button>
                         <h2 id="al-mes" style="margin:0; font-size:18px;"></h2>
@@ -1735,25 +1805,21 @@ body.dona .nav-tab.so-dona { display:flex !important; }
                     <p id="al-resumo" style="text-align:center; font-size:14px; margin-bottom:10px;"></p>
                     <div id="fin-resumo"></div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-                        <button type="button" class="mini-btn so-dona" style="background:var(--orange);" onclick="window.abrirCadastro()">➕ Novo cadastro</button>
-                        <button type="button" class="mini-btn so-dona" style="background:#8338ec;" onclick="window.abrirProf()">👩‍🏫 Professoras</button>
-                        <button type="button" class="mini-btn so-dona" style="background:#e08600;" onclick="window.abrirAluno()">➕ Novo aluno</button>
                         <button type="button" class="mini-btn" style="background:#2a9d8f;" onclick="window.exportarCsv()">⬇️ Planilha do mês (CSV)</button>
                         <button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.exportarBackup()">💾 Backup completo</button>
                     </div>
                     <div class="chips">
-                        <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
-                        <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarAlunos('pendentes')">⏳ Pendentes</button>
-                        <button type="button" class="chip" data-f="pagos" onclick="window.filtrarAlunos('pagos')">✅ Pagos</button>
-                        <button type="button" class="chip" data-f="atestados" onclick="window.filtrarAlunos('atestados')">🩺 Atestados</button>
-                        <button type="button" class="chip" data-f="atrasados" onclick="window.filtrarAlunos('atrasados')">⚠️ Atrasados</button>
-                        <button type="button" class="chip" data-f="confirmar" onclick="window.filtrarAlunos('confirmar')">🟡 A confirmar</button>
-                        <button type="button" class="chip" data-f="repor" onclick="window.filtrarAlunos('repor')">🔁 A repor</button>
+                        <button type="button" class="chip on" data-f="todos" onclick="window.filtrarFin('todos')">Todos</button>
+                        <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarFin('pendentes')">⏳ Pendentes</button>
+                        <button type="button" class="chip" data-f="pagos" onclick="window.filtrarFin('pagos')">✅ Pagos</button>
+                        <button type="button" class="chip" data-f="atrasados" onclick="window.filtrarFin('atrasados')">⚠️ Atrasados</button>
+                        <button type="button" class="chip" data-f="confirmar" onclick="window.filtrarFin('confirmar')">🟡 A confirmar</button>
                     </div>
                 </div>
-                <div id="lista-alunos-admin">Carregando...</div>
+                <div id="lista-fin">Carregando...</div>
             </div>
             <div id="admin-historico" class="admin-section" style="display:none;">
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button></div>
                 <div class="card">
                     <div class="cal-head">
                         <button type="button" onclick="window.mudarMesHist(-1)">‹</button>
