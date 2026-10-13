@@ -100,6 +100,7 @@ onAuthStateChanged(auth, async (user) => {
         if (papel === 'admin') ouvirPlanos();
         ouvirGrade();
         ouvirProfs();
+        ouvirEventos();
     } else {
         iniciarPai(user);
     }
@@ -127,6 +128,7 @@ async function iniciarPai(user) {
     ouvirPlanosPai();
     ouvirFixasPai();
     ouvirFaltasPai();
+    ouvirEventos();
     carregarMeusAgendamentos();
     renderizarPerfil();
 }
@@ -316,11 +318,11 @@ function renderCalendario() {
     for (let d = 1; d <= total; d++) {
         const iso = `${a}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const dots = (porDia[iso] || []).slice(0, 4).map(t => `<i style="background:${COR_PROF[t.professora] || '#888'}"></i>`).join('');
-        html += `<div class="cal-dia${iso === hojeISO() ? ' hoje' : ''}${iso === diaSel ? ' sel' : ''}${iso < hojeISO() && porDia[iso] ? ' teve' : ''}" onclick="window.selecionarDia('${iso}')"><b>${d}</b><div class="cal-dots">${dots}</div>${iso < hojeISO() && porDia[iso] ? '<small class="cal-ok">✓ ' + porDia[iso].reduce((n, t) => n + alunosDe(t.id).length, 0) + '</small>' : ''}</div>`;
+        html += `<div class="cal-dia${iso === hojeISO() ? ' hoje' : ''}${iso === diaSel ? ' sel' : ''}${iso < hojeISO() && porDia[iso] ? ' teve' : ''}" onclick="window.selecionarDia('${iso}')"><b>${d}${eventosNaData(iso).length ? ' 🎉' : ''}</b><div class="cal-dots">${dots}</div>${iso < hojeISO() && porDia[iso] ? '<small class="cal-ok">✓ ' + porDia[iso].reduce((n, t) => n + alunosDe(t.id).length, 0) + '</small>' : ''}</div>`;
     }
     el.innerHTML = html;
     const ts = porDia[diaSel] || [];
-    $('cal-dia-detalhe').innerHTML = `<h3 style="color:var(--dark); margin:15px 0 10px;">📅 ${fmtData(diaSel)}</h3>` + fixasDoDia(diaSel) +
+    $('cal-dia-detalhe').innerHTML = `<h3 style="color:var(--dark); margin:15px 0 10px;">📅 ${fmtData(diaSel)}</h3>` + eventosDoDia(diaSel) + fixasDoDia(diaSel) +
         (ts.length ? ts.map(t => t.data < hojeISO() ? cartaoPassado(t) : `
             <div class="class-card" style="border-left:6px solid ${COR_PROF[t.professora] || '#888'};">
                 <p><b>${esc(t.horario)}</b> · ${esc(t.nivel)} · ${esc(t.professora)}</p>
@@ -502,7 +504,7 @@ window.exportarCsv = () => {
 window.exportarBackup = async function() {
     try {
         const out = { gerado_em: new Date().toISOString() };
-        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas', 'historico', 'planos', 'grade', 'matriculas']) {
+        for (const nome of ['turmas', 'agendamentos', 'responsaveis', 'mensalidades', 'faltas', 'historico', 'planos', 'grade', 'matriculas', 'eventos']) {
             const snap = await getDocs(collection(db, nome));
             out[nome] = snap.docs.map(d => { const x = { id: d.id, ...d.data() }; if (x.comprovante) x.comprovante = '[imagem omitida]'; return x; });
         }
@@ -1282,6 +1284,69 @@ window.removerProf = async id => {
     try { await deleteDoc(doc(db, "professoras", id)); } catch (e) { alert("Erro: " + (e.code || e.message)); }
 };
 
+// ===== EVENTOS (todos veem; só a administração cria e edita) =====
+let eventosAll = [], eventoEdit = null;
+function ouvirEventos() {
+    unsubs.push(onSnapshot(collection(db, "eventos"), snap => {
+        eventosAll = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => `${a.data}${a.horario || ''}`.localeCompare(`${b.data}${b.horario || ''}`));
+        renderEventos();
+        renderCalendario();
+    }, err => console.error(err)));
+}
+const eventosNaData = iso => eventosAll.filter(e => e.data === iso);
+function cartaoEvento(e, adm) {
+    const dt = new Date(e.data + 'T12:00:00'), novo = msTs(e.criado_em) > Date.now() - 3 * 86400000;
+    return `<div class="dia-card"><div class="dia-badge"><b>${String(dt.getDate()).padStart(2, '0')}</b><small>${DIAS[dt.getDay()]}</small></div>
+        <div class="dia-meio" style="gap:4px;"><span style="font-size:15px;"><b>${esc(e.titulo)}</b> ${novo ? '<span class="pill ok">🆕 novo</span>' : ''}</span>
+        <small>${e.horario ? '🕒 ' + e.horario + ' · ' : ''}${fmtData(e.data)}${e.local ? ' · 📍 ' + esc(e.local) : ''}</small>
+        ${e.descricao ? `<small style="color:#555; white-space:pre-line;">${esc(e.descricao)}</small>` : ''}</div>
+        ${adm ? `<div class="dia-acao"><button class="mini-btn" style="background:#6c757d;" onclick="window.editarEvento('${e.id}')">✏️ Editar</button><button class="mini-btn" style="background:#c1121f;" onclick="window.excluirEvento('${e.id}')">🗑️ Excluir</button></div>` : ''}</div>`;
+}
+function renderEventos() {
+    const hoje = hojeISO(), adm = papel === 'admin';
+    const futuros = eventosAll.filter(e => e.data >= hoje), passados = eventosAll.filter(e => e.data < hoje).reverse().slice(0, 8);
+    const html = (futuros.length ? futuros.map(e => cartaoEvento(e, adm)).join('') : '<p class="card" style="text-align:center;">Nenhum evento programado.</p>')
+        + (passados.length ? `<details class="hist-f"><summary>📜 Eventos passados (${passados.length})</summary>${passados.map(e => cartaoEvento(e, adm)).join('')}</details>` : '');
+    ['lista-eventos-admin', 'lista-eventos-pai'].forEach(id => { const el = $(id); if (el) el.innerHTML = html; });
+    const aba = document.querySelector('#parent-panel .nav-tab[data-aba="pai-eventos"]');
+    if (aba) aba.dataset.badge = futuros.filter(e => msTs(e.criado_em) > Date.now() - 3 * 86400000).length || '';
+}
+function eventosDoDia(iso) {
+    const l = eventosNaData(iso);
+    return l.length ? '<p style="font-weight:bold; margin:6px 0;">🎉 Eventos do dia</p>' + l.map(e => cartaoEvento(e, papel === 'admin')).join('') : '';
+}
+window.abrirEvento = (data = '') => {
+    eventoEdit = null;
+    ['ev-titulo', 'ev-hora', 'ev-local', 'ev-desc'].forEach(id => { $(id).value = ''; });
+    $('ev-data').value = data;
+    $('ev-titulo-modal').textContent = '🎉 Novo evento';
+    $('modal-evento').style.display = 'flex';
+};
+window.editarEvento = id => {
+    const e = eventosAll.find(x => x.id === id);
+    if (!e) return;
+    eventoEdit = id;
+    $('ev-titulo').value = e.titulo; $('ev-data').value = e.data; $('ev-hora').value = e.horario || '';
+    $('ev-local').value = e.local || ''; $('ev-desc').value = e.descricao || '';
+    $('ev-titulo-modal').textContent = '✏️ Editar evento';
+    $('modal-evento').style.display = 'flex';
+};
+window.fecharEvento = () => { $('modal-evento').style.display = 'none'; };
+window.salvarEvento = async function() {
+    const titulo = $('ev-titulo').value.trim(), data = $('ev-data').value;
+    if (!titulo || !data) return alert("Preencha o título e a data do evento.");
+    const dados = { titulo, data, horario: $('ev-hora').value, local: $('ev-local').value.trim(), descricao: $('ev-desc').value.trim() };
+    try {
+        if (eventoEdit) await updateDoc(doc(db, "eventos", eventoEdit), dados);
+        else await addDoc(collection(db, "eventos"), { ...dados, criado_em: Date.now(), criado_por: meuNome });
+        window.fecharEvento();
+    } catch (e) { alert("Erro ao salvar o evento: " + (e.code || e.message)); }
+};
+window.excluirEvento = async id => {
+    if (!confirm("Excluir este evento?")) return;
+    try { await deleteDoc(doc(db, "eventos", id)); } catch (e) { alert("Erro ao excluir: " + (e.code || e.message)); }
+};
+
 // ===== EDITAR TURMA =====
 function resetarForm() {
     editandoId = null;
@@ -1489,7 +1554,7 @@ window.addEventListener('scroll', () => {
 
 // ===== PROTEÇÃO CONTRA TOQUE DUPLO =====
 let ocupado = false;
-['salvarProf', 'confirmarFalta', 'enviarAtestado', 'salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
+['salvarEvento', 'salvarProf', 'confirmarFalta', 'enviarAtestado', 'salvarCadastro', 'confirmarAgendamento', 'informarPagamento', 'alternarPagamento', 'registrarFalta', 'recusarPagamento', 'confirmarPgto', 'salvarPlano', 'confirmarMatricula', 'salvarAluno'].forEach(nome => {
     const original = window[nome];
     window[nome] = async (...args) => {
         if (ocupado) return;
@@ -1741,7 +1806,7 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
             <div class="nav-tabs">
                 <div class="nav-tab active" data-aba="admin-turmas" onclick="window.mudarAbaAdmin('admin-turmas')"><span class="ico">📅</span><span class="rot">Turmas</span></div>
                 
-                <div class="nav-tab" data-aba="admin-calendario" data-abas="admin-calendario,admin-historico" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Agenda</span></div>
+                <div class="nav-tab" data-aba="admin-calendario" data-abas="admin-calendario,admin-historico,admin-eventos" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Agenda</span></div>
                 <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')"><span class="ico">🔔</span><span class="rot">Atividade</span></div>
                 <div class="nav-tab so-alunos" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">👥</span><span class="rot">Alunos</span></div>
                 <div class="nav-tab so-dona" data-aba="admin-financeiro" onclick="window.mudarAbaAdmin('admin-financeiro')"><span class="ico">💰</span><span class="rot">Financeiro</span></div>
@@ -1766,7 +1831,7 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
                 </form>
             </div>
             <div id="admin-calendario" class="admin-section card" style="display:none;">
-                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button></div>
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-eventos')">🎉 Eventos</button></div>
                 <div class="cal-head">
                     <button type="button" onclick="window.mudarMes(-1)">‹</button>
                     <h2 id="cal-titulo" style="margin:0;"></h2>
@@ -1818,8 +1883,13 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
                 </div>
                 <div id="lista-fin">Carregando...</div>
             </div>
+            <div id="admin-eventos" class="admin-section" style="display:none;">
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-eventos')">🎉 Eventos</button></div>
+                <button type="button" class="btn-action so-dona" style="margin:0 0 12px;" onclick="window.abrirEvento()">➕ Novo evento</button>
+                <div id="lista-eventos-admin">Carregando...</div>
+            </div>
             <div id="admin-historico" class="admin-section" style="display:none;">
-                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button></div>
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-eventos')">🎉 Eventos</button></div>
                 <div class="card">
                     <div class="cal-head">
                         <button type="button" onclick="window.mudarMesHist(-1)">‹</button>
@@ -1850,6 +1920,7 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
                 <div class="nav-tab active" data-aba="pai-aulas" onclick="window.mudarAbaPai('pai-aulas')"><span class="ico">🏊‍♂️</span><span class="rot">Aulas</span></div>
                 <div class="nav-tab" data-aba="pai-agendamentos" onclick="window.mudarAbaPai('pai-agendamentos')"><span class="ico">📅</span><span class="rot">Agendados</span></div>
                 <div class="nav-tab" data-aba="pai-pagamento" onclick="window.mudarAbaPai('pai-pagamento')"><span class="ico">💳</span><span class="rot">Pagamento</span></div>
+                <div class="nav-tab" data-aba="pai-eventos" onclick="window.mudarAbaPai('pai-eventos')"><span class="ico">🎉</span><span class="rot">Eventos</span></div>
                 <div class="nav-tab" data-aba="pai-perfil" onclick="window.mudarAbaPai('pai-perfil')"><span class="ico">⚙️</span><span class="rot">Perfil</span></div>
             </div>
             <div id="pai-aulas" class="parent-section"><div id="lista-aulas-disponiveis">Buscando aulas...</div></div>
@@ -1866,6 +1937,7 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
                     <div id="lista-pagamento"></div>
                 </div>
             </div>
+            <div id="pai-eventos" class="parent-section" style="display:none;"><div id="lista-eventos-pai">Carregando...</div></div>
             <div id="pai-perfil" class="parent-section card" style="display:none;">
                 <h2>Meu Perfil Familiar</h2>
                 <div class="form-group" style="margin-top:20px;">
@@ -2009,6 +2081,21 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
         <div style="display:flex; gap:10px;">
             <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharFalta()">Cancelar</button>
             <button type="button" class="btn-action" style="background:#ef233c;" onclick="window.confirmarFalta()">Avisar falta</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-evento" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <h2 id="ev-titulo-modal" style="color:var(--primary);">🎉 Novo evento</h2>
+        <div class="form-group"><label>Título</label><input type="text" id="ev-titulo" maxlength="80"></div>
+        <div class="form-group"><label>Data</label><input type="date" id="ev-data"></div>
+        <div class="form-group"><label>Horário (opcional)</label><input type="time" id="ev-hora"></div>
+        <div class="form-group"><label>Local (opcional)</label><input type="text" id="ev-local" maxlength="80"></div>
+        <div class="form-group"><label>Descrição (opcional)</label><textarea id="ev-desc" rows="4" maxlength="600" style="width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px; font-family:inherit;"></textarea></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharEvento()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.salvarEvento()">Salvar</button>
         </div>
     </div>
 </div>
