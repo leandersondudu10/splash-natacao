@@ -837,25 +837,76 @@ function ouvirGrade() {
     unsubs.push(onSnapshot(collection(db, "grade"), snap => { if (snap.empty && !snap.metadata.fromCache && !semeando) { semeando = true; semearGrade(); } gradeAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort(porHorario); renderGrade(); renderCalendario(); }, err => console.error(err)));
     unsubs.push(onSnapshot(collection(db, "matriculas"), snap => { matAdmin = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderGrade(); renderCalendario(); }, err => console.error(err)));
 }
+let secoesAbertas = new Set();
+const checksProfs = g => `<div class="profs">${nomesProfs().map(pr => `<label class="prof-ck"><input type="checkbox" data-prof="${esc(pr)}"${profsDe(g.professora).includes(pr) ? ' checked' : ''} onchange="window.trocarProfs('${g.id}', this)"> ${esc(pr)}</label>`).join('')}${g.professora ? '' : '<small style="color:#888;">a definir</small>'}</div>`;
+const chipsAlunosTurma = (g, ms) => ms.map(m => `<span class="chip-falta" style="background:#e3f6fb;">${esc(m.nome_crianca)}${m.dias.length < g.dias.length ? ' (' + nomeDias(m.dias) + ')' : ''} <a onclick="window.removerMatricula('${m.id}')">✕</a></span>`).join('');
+function cartaoGrupo(g) {
+    const ms = matAdmin.filter(m => m.id_turma === g.id);
+    return `<div class="class-card" style="border-left:6px solid ${COR_PROF[g.professora] || '#00b4d8'};">
+        <p><b>${g.horario}</b> · ${esc(g.nome || TIPOS[g.tipo])}${faixa(g) ? ' · ' + faixa(g) : ''}</p>
+        <p><small>👥 ${g.dias.map(d => `${DIAS[d]} ${ocupDia(g, d)}/${g.capacidade}`).join(' · ')}</small></p>
+        ${checksProfs(g)}
+        <div>${chipsAlunosTurma(g, ms) || '<small style="color:#888;">Nenhum aluno ainda.</small>'}</div>
+        <button class="btn-action" style="margin-top:10px; padding:11px;" onclick="window.abrirMatricula('${g.id}')">➕ Incluir aluno</button>
+    </div>`;
+}
+function linhaIndividual(g) {
+    const ms = matAdmin.filter(m => m.id_turma === g.id), livre = g.dias.some(d => ocupDia(g, d) < g.capacidade);
+    return `<div class="ind-linha">
+        <div class="ind-hora"><b>${g.horario}</b><small>${esc(g.nome || '')}</small></div>
+        <div class="ind-meio">${chipsAlunosTurma(g, ms) || '<small style="color:#2a9d8f; font-weight:bold;">Livre</small>'}
+            <details class="prof-det"><summary>👩‍🏫 ${esc(g.professora || 'professora a definir')}</summary>${checksProfs(g)}</details></div>
+        <div class="ind-acao">${livre ? `<button class="mini-btn" onclick="window.abrirMatricula('${g.id}')">➕ Incluir</button>` : '<span class="pill">cheio</span>'}</div>
+    </div>`;
+}
+function corpoIndividuais(lista) {
+    let html = '', atual = '';
+    lista.forEach(g => {
+        const k = g.dias.join('');
+        if (k !== atual) { atual = k; html += `<h4 class="sub-dias">${GRUPOS_DIAS[k] || nomeDias(g.dias)}</h4>`; }
+        html += linhaIndividual(g);
+    });
+    return html;
+}
+function secaoHtml(x) {
+    const ids = new Set(x.lista.map(g => g.id)), aberta = secoesAbertas.has(x.id);
+    const alunos = new Set(matAdmin.filter(m => ids.has(m.id_turma)).map(m => `${m.id_responsavel}||${m.nome_crianca}`)).size;
+    const comVaga = x.lista.filter(g => g.dias.some(d => ocupDia(g, d) < g.capacidade)).length;
+    return `<div class="acc${aberta ? ' aberta' : ''}" id="acc-${x.id}">
+        <button type="button" class="acc-head" aria-expanded="${aberta}" onclick="window.alternarSecao('${x.id}')">
+            <span class="acc-tit">${x.titulo}</span><span class="acc-seta">▾</span>
+            <span class="acc-res">${x.lista.length} turma(s) · ${alunos} aluno(s) · ${comVaga} com vaga</span>
+        </button>
+        <div class="acc-corpo">${x.individual ? corpoIndividuais(x.lista) : x.lista.map(cartaoGrupo).join('')}</div>
+    </div>`;
+}
 function renderGrade() {
     const el = $('lista-grade');
     if (!el) return;
     if (!gradeAdmin.length) { el.innerHTML = '<div class="card" style="text-align:center;"><p style="margin-bottom:8px;">Criando a grade da escola...</p><button class="btn-action" onclick="window.importarGrade()">📥 Importar grade da escola</button></div>'; return; }
-    let html = '', atual = '';
-    gradeAdmin.forEach(g => {
-        const chave = g.dias.join('');
-        if (chave !== atual) { atual = chave; html += `<h3 class="grupo-dias">${GRUPOS_DIAS[chave] || nomeDias(g.dias)}</h3>`; }
-        const ms = matAdmin.filter(m => m.id_turma === g.id);
-        html += `<div class="class-card" style="border-left:6px solid ${COR_PROF[g.professora] || '#00b4d8'};">
-            <p><b>${g.horario}</b> · ${esc(g.nome || TIPOS[g.tipo])}${faixa(g) ? ' · ' + faixa(g) : ''}</p>
-            <p><small>👥 ${g.dias.map(d => `${DIAS[d]} ${ocupDia(g, d)}/${g.capacidade}`).join(' · ')}</small></p>
-            <div class="profs">${nomesProfs().map(pr => `<label class="prof-ck"><input type="checkbox" data-prof="${esc(pr)}"${profsDe(g.professora).includes(pr) ? ' checked' : ''} onchange="window.trocarProfs('${g.id}', this)"> ${pr}</label>`).join('')}${g.professora ? '' : '<small style="color:#888;">a definir</small>'}</div>
-            <div>${ms.map(m => `<span class="chip-falta" style="background:#e3f6fb;">${esc(m.nome_crianca)}${m.dias.length < g.dias.length ? ' (' + nomeDias(m.dias) + ')' : ''} <a onclick="window.removerMatricula('${m.id}')">✕</a></span>`).join('') || '<small style="color:#888;">Nenhum aluno ainda.</small>'}</div>
-            <button class="btn-action" style="margin-top:10px; padding:11px;" onclick="window.abrirMatricula('${g.id}')">➕ Incluir aluno</button>
-        </div>`;
-    });
-    el.innerHTML = html;
+    const coletivas = gradeAdmin.filter(g => g.tipo !== 'individual');
+    const secoes = [
+        { id: 'seg-qua', titulo: '📅 Segunda e Quarta', lista: coletivas.filter(g => g.dias.join('') === '13') },
+        { id: 'ter-qui', titulo: '📅 Terça e Quinta', lista: coletivas.filter(g => g.dias.join('') === '24') },
+        { id: 'indiv', titulo: '👤 Individuais', lista: gradeAdmin.filter(g => g.tipo === 'individual'), individual: true },
+        { id: 'outras', titulo: '📌 Outras turmas', lista: coletivas.filter(g => !['13', '24'].includes(g.dias.join(''))) }
+    ].filter(x => x.lista.length);
+    el.innerHTML = '<div class="acc-tudo"><button type="button" class="chip" onclick="window.alternarTodas(true)">⬇️ Expandir tudo</button><button type="button" class="chip" onclick="window.alternarTodas(false)">⬆️ Recolher tudo</button></div>' + secoes.map(secaoHtml).join('');
 }
+window.alternarSecao = id => {
+    const box = $('acc-' + id);
+    if (!box) return;
+    const abre = !box.classList.contains('aberta');
+    box.classList.toggle('aberta', abre);
+    box.querySelector('.acc-head').setAttribute('aria-expanded', abre);
+    if (abre) secoesAbertas.add(id); else secoesAbertas.delete(id);
+};
+window.alternarTodas = abrir => document.querySelectorAll('#lista-grade .acc').forEach(b => {
+    const id = b.id.slice(4);
+    b.classList.toggle('aberta', abrir);
+    b.querySelector('.acc-head').setAttribute('aria-expanded', abrir);
+    if (abrir) secoesAbertas.add(id); else secoesAbertas.delete(id);
+});
 window.visaoTurmas = v => {
     $('lista-grade').style.display = v === 'fixas' ? 'block' : 'none';
     $('resumo-hoje').style.display = $('lista-admin-turmas').style.display = v === 'fixas' ? 'none' : 'block';
@@ -1987,6 +2038,29 @@ html { overflow-x:hidden; }
 /* telas muito largas */
 @media (min-width:1500px) {
     body.logado .container { max-width:1280px; }
+}
+/* ===== TURMAS EM SANFONA (expandir e recolher) ===== */
+.acc { background:#fff; border-radius:16px; margin-bottom:12px; box-shadow:0 4px 14px rgba(0,119,190,.12); overflow:hidden; }
+.acc-head { width:100%; display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; padding:16px; background:none; border:none; text-align:left; cursor:pointer; font-family:inherit; font-size:16px; color:inherit; }
+.acc-tit { flex:1; font-weight:bold; color:var(--dark); }
+.acc-seta { font-size:20px; color:var(--primary); transition:transform .25s; }
+.acc-res { order:3; flex:1 1 100%; font-size:12px; color:#666; }
+.acc.aberta .acc-head { background:#f0f9ff; }
+.acc.aberta .acc-seta { transform:rotate(180deg); }
+.acc-corpo { display:none; padding:6px 12px 12px; }
+.acc.aberta .acc-corpo { display:block; animation:surgir .25s ease; }
+.acc-tudo { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.sub-dias { color:var(--dark); font-size:14px; margin:14px 0 4px; }
+.ind-linha { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid #eee; }
+.ind-hora { min-width:58px; display:flex; flex-direction:column; }
+.ind-meio { flex:1; min-width:0; }
+.ind-acao { flex-shrink:0; }
+.prof-det summary { cursor:pointer; font-size:12px; color:#666; margin-top:4px; }
+@media (min-width:768px) {
+    #lista-grade { display:block; }
+    .acc.aberta .acc-corpo { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap:12px; align-items:start; }
+    .acc-corpo .sub-dias { grid-column:1 / -1; }
+    .acc-corpo .class-card { margin:0; }
 }
 </style>
 </head>
