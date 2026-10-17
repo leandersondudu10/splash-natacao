@@ -600,8 +600,8 @@ function renderListaAlunos(dados) {
             <p style="margin-top:6px;"><small>🖼️ Imagem e voz: ${rotuloImagemAdm(d.p.uid, d.c)}</small></p>
             <p style="margin-top:6px;"><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
             <div class="faltas-lista">${d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + esc(f.horario) : ''}${f.origem === 'pai' ? ' · pai' : ''}</span>${adm ? `<span>${(f.atestado || f.tem_atestado) ? `<a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span>` : ''}</div>`; }).join('')}</div>
-            ${adm ? `<div style="display:flex; gap:8px; margin-top:8px;">
-                <input type="date" value="${hojeISO()}" style="flex:1; padding:8px; border:2px solid #e0e0e0; border-radius:8px;">
+            ${adm ? `<div class="acoes-aluno">
+                <input type="date" value="${hojeISO()}">
                 <button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>
                 <button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
                 <button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirTermos(this.dataset.uid)">🧾 Termos</button>
@@ -1901,6 +1901,93 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
 .termo { background:#f4fbfd; border-radius:10px; padding:12px; font-size:14px; line-height:1.5; max-height:38vh; overflow-y:auto; white-space:pre-line; }
 .opt { display:flex; gap:10px; align-items:flex-start; background:#fff; border:2px solid #e0e0e0; border-radius:12px; padding:12px; margin:8px 0; font-size:15px; }
 .opt input { width:auto; margin-top:3px; }
+/* ===== AJUSTES DE RESPONSIVIDADE (celulares estreitos) ===== */
+html { overflow-x:hidden; }
+.nav-tabs { display:grid !important; grid-auto-flow:column; grid-auto-columns:minmax(0, 1fr); left:0; right:0; max-width:100vw; }
+.nav-tab { min-width:0; overflow:hidden; }
+.nav-tab .ico { font-size:clamp(18px, 5.6vw, 22px); }
+.nav-tab .rot { font-size:clamp(9px, 2.8vw, 11px); }
+.container, .card, .class-card { max-width:100%; }
+.card, .class-card { overflow-wrap:anywhere; }
+.acoes-aluno { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.acoes-aluno input[type=date] { flex:1 1 100%; min-width:0; padding:10px; border:2px solid #e0e0e0; border-radius:8px; font-size:16px; }
+.acoes-aluno .mini-btn { flex:1 1 auto; text-align:center; }
+.falta-linha { flex-wrap:wrap; }
+#cal-corpo { grid-template-columns:repeat(7, minmax(0, 1fr)); }
+.fin-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+.dia-meio { min-width:0; }
+.dia-acao { flex-shrink:0; }
+@media (max-width:420px) { .mini-btn { padding:10px 12px; font-size:13px; } .chip { padding:9px 12px; font-size:13px; } }
+/* ===== RESPONSIVIDADE POR TAMANHO DE TELA ===== */
+#login-screen { max-width:440px; margin:0 auto; }
+
+/* celulares muito pequenos */
+@media (max-width:360px) {
+    .container { padding:0 10px; margin:12px auto; }
+    .card { padding:14px; }
+    h2 { font-size:18px; }
+    .btn-action { font-size:15px; padding:12px; }
+    .header { padding:14px 10px; }
+    .dia-badge { min-width:40px; }
+}
+
+/* celular deitado (pouca altura): barra de baixo mais baixa, só ícones */
+@media (max-height:480px) and (orientation:landscape) {
+    .nav-tab .rot { display:none; }
+    .nav-tabs { padding-top:4px; padding-bottom:calc(4px + env(safe-area-inset-bottom)); }
+    body.logado { padding-bottom:calc(64px + env(safe-area-inset-bottom)); }
+    #fab { bottom:calc(70px + env(safe-area-inset-bottom)); }
+}
+
+/* tablets e telas médias */
+@media (min-width:768px) {
+    .container { max-width:860px; }
+    #logo-img { max-height:110px; }
+    .cal-dia { min-height:76px; }
+    #lista-alunos-admin, #lista-fin, #lista-grade, #lista-admin-turmas, #lista-aulas-disponiveis,
+    #lista-meus-agendamentos, #lista-eventos-admin, #lista-eventos-pai, #lista-atividade, #lista-historico {
+        display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap:14px; align-items:start;
+    }
+    #lista-alunos-admin > .class-card, #lista-fin > .class-card, #lista-grade > .class-card, #lista-admin-turmas > .class-card,
+    #lista-aulas-disponiveis > .class-card, #lista-meus-agendamentos > .class-card, #lista-eventos-admin > .dia-card,
+    #lista-eventos-pai > .dia-card, #lista-atividade > .class-card, #lista-historico > .class-card { margin:0; }
+    #lista-alunos-admin > .card, #lista-fin > .card, #lista-grade > .card, #lista-grade > h3, #lista-admin-turmas > .card,
+    #lista-aulas-disponiveis > p, #lista-meus-agendamentos > .card, #lista-eventos-admin > details, #lista-eventos-admin > .card,
+    #lista-eventos-pai > details, #lista-eventos-pai > .card, #lista-atividade > .card, #lista-historico > .card { grid-column:1 / -1; }
+    #modal-wiz .modal-box, #modal-termos .modal-box, #modal-cadastro .modal-box, #modal-prof .modal-box { max-width:560px; }
+}
+
+/* tablets: a barra de baixo fica centralizada e mais larga */
+@media (min-width:700px) and (max-width:1023px) {
+    .nav-tabs { width:min(720px, 100%); }
+    #fab { right:max(16px, calc(50% - 344px)); }
+}
+
+/* notebooks e desktop: menu lateral, conteúdo largo e calendário ao lado do dia */
+@media (min-width:1024px) {
+    body.logado { padding-left:230px; padding-bottom:30px; }
+    body.logado .container { max-width:1120px; }
+    .nav-tabs { display:flex !important; flex-direction:column; justify-content:flex-start; gap:4px; top:0; bottom:0; left:0; right:auto;
+        width:230px; max-width:230px; transform:none; padding:28px 12px 20px; border-radius:0 24px 24px 0; box-shadow:4px 0 18px rgba(0,60,120,.14); }
+    .nav-tab { flex:0 0 auto; flex-direction:row; justify-content:flex-start; gap:14px; padding:13px 16px; border-radius:14px; }
+    .nav-tab .ico { font-size:22px; }
+    .nav-tab .rot { font-size:15px; max-width:none; overflow:visible; }
+    .nav-tab.active .ico { transform:scale(1.1); }
+    .nav-tab[data-badge]:not([data-badge=""])::after { top:50%; right:12px; transform:translateY(-50%); }
+    #fab { right:28px; bottom:28px; }
+    #admin-calendario { display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(0, 1fr); column-gap:24px; align-content:start; }
+    #admin-calendario > .chips { grid-column:1 / -1; }
+    #admin-calendario > .cal-head { grid-column:1; grid-row:2; }
+    #admin-calendario > #cal-corpo { grid-column:1; grid-row:3; }
+    #admin-calendario > p { grid-column:1; grid-row:4; }
+    #admin-calendario > #cal-dia-detalhe { grid-column:2; grid-row:2 / span 3; margin-top:0; }
+    .cal-dia { min-height:86px; }
+}
+
+/* telas muito largas */
+@media (min-width:1500px) {
+    body.logado .container { max-width:1280px; }
+}
 </style>
 </head>
 <body>
@@ -1947,7 +2034,7 @@ body.ve-alunos .nav-tab.so-alunos { display:flex !important; }
                 <div class="nav-tab" data-aba="admin-calendario" data-abas="admin-calendario,admin-historico,admin-eventos" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Agenda</span></div>
                 <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')"><span class="ico">🔔</span><span class="rot">Atividade</span></div>
                 <div class="nav-tab so-alunos" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">👥</span><span class="rot">Alunos</span></div>
-                <div class="nav-tab so-dona" data-aba="admin-financeiro" onclick="window.mudarAbaAdmin('admin-financeiro')"><span class="ico">💰</span><span class="rot">Financeiro</span></div>
+                <div class="nav-tab so-dona" data-aba="admin-financeiro" onclick="window.mudarAbaAdmin('admin-financeiro')"><span class="ico">💰</span><span class="rot">Finanças</span></div>
             </div>
             <div id="admin-nova" class="admin-section card" style="display:none;">
                 <h2 id="titulo-form-turma">Liberar Nova Turma</h2>
