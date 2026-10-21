@@ -573,9 +573,26 @@ function renderAlunos() {
     dadosAl = calcDados();
     renderListaAlunos(dadosAl.filter(d => !d.orfao));
     renderFinanceiro(dadosAl);
+    if (fichaAtual) renderFicha();
 }
 
-// ----- tela ALUNOS (professoras veem sem atestados, cadastros e dinheiro)
+// ----- tela ALUNOS: cartões resumidos + ficha completa ao tocar
+let fichaAtual = null;
+const linhasFaltas = (d, adm) => d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + esc(f.horario) : ''}${f.origem === 'pai' ? ' · pai' : ''}</span>${adm ? `<span>${(f.atestado || f.tem_atestado) ? `<a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span>` : ''}</div>`; }).join('');
+function cartaoAluno(d, adm) {
+    const nAt = d.fs.filter(f => sit(f) === 'analise').length, img = ultimoAceite(aceitesAdmin, 'imagem', d.p.uid, d.c), nasc = d.p.nascimentos?.[d.c];
+    const alertas = [
+        adm && nAt ? `<span class="pill an">🩺 ${nAt} atestado(s)</span>` : '',
+        d.saldo > 0 ? `<span class="pill ok">🔁 ${d.saldo} reposição(ões)</span>` : '',
+        img?.decisao === 'nao_autorizo' ? '<span class="pill no">🚫 sem imagem</span>' : '',
+        !img ? '<span class="pill">⏳ termo pendente</span>' : ''
+    ].join('');
+    return `<div class="class-card aluno-mini" style="border-left:6px solid ${adm && nAt ? '#f2b705' : img?.decisao === 'nao_autorizo' ? '#c1121f' : '#00b4d8'};" data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}" onclick="window.abrirFicha(this.dataset.uid, this.dataset.nome)">
+        <div class="am-topo"><b>🏊‍♂️ ${esc(d.c)}</b><small>${nasc ? idadeDe(nasc) + ' anos' : 'sem nascimento'}</small><span class="am-seta">›</span></div>
+        <small>${d.turmas.length ? d.turmas.map(i => `📌 ${nomeDias(i.x.dias)} ${i.g.horario}`).join(' · ') : 'Sem turma fixa'}</small>
+        ${alertas ? `<div class="am-alertas">${alertas}</div>` : ''}
+    </div>`;
+}
 function renderListaAlunos(dados) {
     const el = $('lista-alunos-admin');
     if (!el) return;
@@ -590,24 +607,37 @@ function renderListaAlunos(dados) {
     const q = slug(buscaAl.trim());
     const lista = dados.filter(d => (filtroAl === 'todos' || (filtroAl === 'atestados' && d.fs.some(f => sit(f) === 'analise')) || (filtroAl === 'repor' && d.saldo > 0) || (filtroAl === 'semturma' && !d.turmas.length) || (filtroAl === 'semimg' && ultimoAceite(aceitesAdmin, 'imagem', d.p.uid, d.c)?.decisao === 'nao_autorizo'))
         && (!q || slug(d.c).includes(q) || slug(d.p.nome_responsavel || '').includes(q)));
-    el.innerHTML = lista.length ? lista.map(d => {
-        const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`, nasc = d.p.nascimentos?.[d.c];
-        const emAnalise = d.fs.some(f => sit(f) === 'analise');
-        return `<div class="class-card" style="border-left:6px solid ${emAnalise && adm ? '#f2b705' : '#00b4d8'};">
-            <p>🏊‍♂️ <b>${esc(d.c)}</b> <small>· ${nasc ? idadeDe(nasc) + ' anos' : 'sem data de nascimento'}</small></p>
-            <p><small>Resp: ${esc(d.p.nome_responsavel)} · 📞 ${esc(d.p.telefone || 'N/A')}</small></p>
-            <div>${d.turmas.length ? d.turmas.map(i => `<span class="chip-falta" style="background:#e3f6fb;">📌 ${nomeDias(i.x.dias)} ${i.g.horario}</span>`).join('') : '<small style="color:#888;">Sem turma fixa</small>'}</div>
-            <p style="margin-top:6px;"><small>🖼️ Imagem e voz: ${rotuloImagemAdm(d.p.uid, d.c)}</small></p>
-            <p style="margin-top:6px;"><small>🔁 Faltas: <b>${d.fs.length}</b> · Reposições agendadas: <b>${d.reps}</b> · A repor: <b>${d.saldo}</b></small></p>
-            <div class="faltas-lista">${d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + esc(f.horario) : ''}${f.origem === 'pai' ? ' · pai' : ''}</span>${adm ? `<span>${(f.atestado || f.tem_atestado) ? `<a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span>` : ''}</div>`; }).join('')}</div>
-            ${adm ? `<div class="acoes-aluno">
-                <input type="date" value="${hojeISO()}">
-                <button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>
-                <button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Dados</button>
-                <button class="mini-btn" style="background:#6c757d;" ${at} onclick="window.abrirTermos(this.dataset.uid)">🧾 Termos</button>
-            </div>` : ''}
-        </div>`;
-    }).join('') : '<p class="card" style="text-align:center;">Nenhum aluno encontrado.</p>';
+    el.innerHTML = lista.length ? lista.map(d => cartaoAluno(d, adm)).join('') : '<p class="card" style="text-align:center;">Nenhum aluno encontrado.</p>';
+}
+window.abrirFicha = (uid, nome) => { fichaAtual = { uid, nome, aba: 'resumo' }; $('modal-ficha').style.display = 'flex'; renderFicha(); };
+window.fecharFicha = () => { fichaAtual = null; $('modal-ficha').style.display = 'none'; };
+window.fichaAba = a => { fichaAtual.aba = a; renderFicha(); };
+window.toggleFormFalta = () => { const el = $('ficha-form-falta'); el.style.display = el.style.display === 'none' ? 'flex' : 'none'; };
+function renderFicha() {
+    if (!fichaAtual) return;
+    const d = dadosAl.find(x => x.p.uid === fichaAtual.uid && x.c === fichaAtual.nome && !x.orfao);
+    if (!d) { window.fecharFicha(); return; }
+    const adm = papel === 'admin', nasc = d.p.nascimentos?.[d.c];
+    $('ficha-tit').innerHTML = `🏊‍♂️ ${esc(d.c)} <small style="font-weight:normal; color:#666;">${nasc ? '· ' + idadeDe(nasc) + ' anos' : ''}</small>`;
+    $('ficha-abas').innerHTML = [['resumo', '👤 Resumo'], ['faltas', '📅 Faltas'], ...(adm ? [['termos', '🧾 Termos']] : [])]
+        .map(([id, rot]) => `<button type="button" class="chip${fichaAtual.aba === id ? ' on' : ''}" onclick="window.fichaAba('${id}')">${rot}</button>`).join('');
+    const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`, wa = String(d.p.telefone || '').replace(/\D/g, '');
+    if (fichaAtual.aba === 'resumo') {
+        $('ficha-corpo').innerHTML = `<div class="ficha-bloco"><small>Responsável</small><b>${esc(d.p.nome_responsavel)}</b><span>📞 ${esc(d.p.telefone || 'sem telefone')}</span>${wa ? `<a class="btn-wpp" href="https://wa.me/${wa.length <= 11 ? '55' + wa : wa}" target="_blank" rel="noopener">💬 Chamar no WhatsApp</a>` : ''}</div>
+            <div class="ficha-bloco"><small>Turmas fixas</small>${d.turmas.length ? d.turmas.map(i => `<span>📌 ${nomeDias(i.x.dias)} · ${i.g.horario} · ${esc(i.g.nome || TIPOS[i.g.tipo])}${i.g.professora ? ' · ' + esc(i.g.professora) : ''}</span>`).join('') : '<span style="color:#888;">Ainda não está em nenhuma turma.</span>'}</div>
+            <div class="ficha-bloco"><small>Imagem e voz</small><b>${rotuloImagemAdm(d.p.uid, d.c)}</b></div>
+            <div class="ficha-bloco"><small>Nascimento</small><b>${nasc ? fmtData(nasc) + ' (' + idadeDe(nasc) + ' anos)' : 'não cadastrado'}</b></div>
+            ${adm ? `<button class="btn-action" style="background:#6c757d;" ${at} onclick="window.abrirAluno(this.dataset.uid, this.dataset.nome)">✏️ Editar dados</button>` : ''}`;
+    } else if (fichaAtual.aba === 'faltas') {
+        $('ficha-corpo').innerHTML = `<p class="ficha-frase">${d.fs.length} falta(s) · ${d.reps} reposição(ões) já agendada(s)<br><b>Direito a reposição agora: ${d.saldo}</b></p>
+            <div class="faltas-lista">${linhasFaltas(d, adm) || '<small style="color:#888;">Nenhuma falta registrada.</small>'}</div>
+            ${adm ? `<button class="btn-action" onclick="window.toggleFormFalta()">＋ Registrar falta</button><div id="ficha-form-falta" class="acoes-aluno" style="display:none;">${opcoesFalta(d, at)}</div>` : ''}`;
+    } else {
+        const priv = aceitesAdmin.some(a => a.id_responsavel === d.p.uid && a.tipo === 'privacidade');
+        $('ficha-corpo').innerHTML = `<div class="ficha-bloco"><small>Aviso de privacidade</small><b>${priv ? '✅ aceito' : '⏳ pendente'}</b></div>
+            <div class="ficha-bloco"><small>Imagem e voz de ${esc(d.c)}</small><b>${rotuloImagemAdm(d.p.uid, d.c)}</b></div>
+            <button class="btn-action" onclick="window.abrirTermos('${esc(d.p.uid)}')">🧾 Abrir comprovantes</button>`;
+    }
 }
 
 // ----- tela FINANCEIRO (só administração)
@@ -716,10 +746,29 @@ window.verComprovante = (uid, crianca) => {
     $('comp-img').src = m.comprovante;
     $('modal-comp').style.display = 'flex';
 };
-window.registrarFalta = async function(uid, crianca, data) {
-    if (!data) return alert("Escolha a data da falta.");
+// A falta só pode ser lançada em uma aula real do aluno: de 21 dias atrás até 14 dias à frente.
+const JANELA_FALTA = { passado: 21, futuro: 14 };
+function ocorrenciasAluno(d) {
+    const out = [], h = new Date();
+    for (let i = -JANELA_FALTA.passado; i <= JANELA_FALTA.futuro; i++) {
+        const x = new Date(h.getFullYear(), h.getMonth(), h.getDate() + i);
+        const iso = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+        d.turmas.forEach(t => { if (t.x.dias.includes(x.getDay())) out.push({ iso, g: t.g }); });
+    }
+    return out.filter(o => !d.fs.some(f => f.data === o.iso && (!f.id_turma || f.id_turma === o.g.id)));
+}
+function opcoesFalta(d, at) {
+    const o = ocorrenciasAluno(d);
+    if (!o.length) return '<small style="flex:1 1 100%; color:#888;">Sem aula fixa nesse período para lançar falta.</small>';
+    const hoje = hojeISO(), sel = o.find(x => x.iso >= hoje) || o[o.length - 1];
+    return `<small style="flex:1 1 100%;">Registrar falta em uma aula do aluno:</small><select>${o.map(x => `<option value="${x.iso}|${x.g.id}"${x === sel ? ' selected' : ''}>${DIAS[new Date(x.iso + 'T12:00:00').getDay()]} ${fmtData(x.iso).slice(0, 5)} · ${x.g.horario}${x.iso === hoje ? ' (hoje)' : ''}</option>`).join('')}</select><button class="mini-btn" ${at} onclick="window.registrarFalta(this.dataset.uid, this.dataset.nome, this.previousElementSibling.value)">＋ Falta</button>`;
+}
+window.registrarFalta = async function(uid, crianca, valor) {
+    const [data, idTurma] = String(valor || '').split('|');
+    if (!data || !idTurma) return alert("Escolha a aula da falta.");
+    const g = gradeAdmin.find(x => x.id === idTurma);
     try {
-        await addDoc(collection(db, "faltas"), { id_responsavel: uid, nome_crianca: crianca, data, mes: data.slice(0, 7), registrado_por: meuNome || '', criado_em: Date.now() });
+        await addDoc(collection(db, "faltas"), { id_responsavel: uid, nome_crianca: crianca, id_turma: idTurma, data, mes: data.slice(0, 7), horario: g?.horario || '', registrado_por: meuNome || '', origem: 'professora', criado_em: Date.now() });
     } catch (e) { alert("Erro ao registrar falta: " + (e.code || e.message)); }
 };
 window.removerFalta = async function(id) {
@@ -1963,6 +2012,7 @@ html { overflow-x:hidden; }
 .acoes-aluno { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
 .acoes-aluno input[type=date] { flex:1 1 100%; min-width:0; padding:10px; border:2px solid #e0e0e0; border-radius:8px; font-size:16px; }
 .acoes-aluno .mini-btn { flex:1 1 auto; text-align:center; }
+.acoes-aluno select { flex:1 1 100%; min-width:0; padding:10px; border:2px solid #e0e0e0; border-radius:8px; font-size:16px; background:#fff; }
 .falta-linha { flex-wrap:wrap; }
 #cal-corpo { grid-template-columns:repeat(7, minmax(0, 1fr)); }
 .fin-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
@@ -2062,6 +2112,18 @@ html { overflow-x:hidden; }
     .acc-corpo .sub-dias { grid-column:1 / -1; }
     .acc-corpo .class-card { margin:0; }
 }
+/* ===== CARTÃO RESUMIDO E FICHA DO ALUNO ===== */
+.aluno-mini { cursor:pointer; padding:12px 14px; }
+.aluno-mini:active { background:#f0f9ff; }
+.am-topo { display:flex; align-items:center; gap:8px; }
+.am-topo small { color:#666; }
+.am-seta { margin-left:auto; font-size:24px; line-height:1; color:var(--primary); }
+.am-alertas { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.ficha-topo { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.ficha-bloco { display:flex; flex-direction:column; align-items:flex-start; gap:4px; padding:10px 0; border-top:1px solid #eee; font-size:14px; }
+.ficha-bloco small { color:#888; font-size:12px; }
+.ficha-bloco .btn-wpp { align-self:stretch; }
+.ficha-frase { background:#eef7fb; border-radius:10px; padding:10px; font-size:14px; margin-bottom:8px; line-height:1.5; }
 </style>
 </head>
 <body>
@@ -2259,6 +2321,14 @@ html { overflow-x:hidden; }
                     </div>
             </div>
         </div>
+    </div>
+</div>
+
+<div id="modal-ficha" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <div class="ficha-topo"><h2 id="ficha-tit" style="margin:0; font-size:20px; text-align:left;"></h2><button type="button" class="chip" onclick="window.fecharFicha()">✕ Fechar</button></div>
+        <div id="ficha-abas" class="chips" style="margin:10px 0;"></div>
+        <div id="ficha-corpo"></div>
     </div>
 </div>
 
