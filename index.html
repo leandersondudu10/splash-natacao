@@ -577,7 +577,35 @@ function renderAlunos() {
 }
 
 // ----- tela ALUNOS: cartões resumidos + ficha completa ao tocar
-let fichaAtual = null;
+let fichaAtual = null, cacheAtestados = {};
+async function carregarAtestadosAluno(d) {
+    const box = $('ficha-atestados');
+    if (!box) return;
+    if (!cacheAtestados[d.p.uid]) {
+        box.innerHTML = '<small>🩺 Atestados enviados</small><span style="color:#888;">Carregando...</span>';
+        try {
+            const snap = await getDocs(query(collection(db, "atestados"), where("id_responsavel", "==", d.p.uid)));
+            cacheAtestados[d.p.uid] = snap.docs.map(x => ({ id: x.id, ...x.data({ serverTimestamps: 'estimate' }) }));
+        } catch (e) { box.innerHTML = '<small>🩺 Atestados enviados</small><span style="color:#c1121f;">Erro ao carregar (' + esc(e.code || e.message) + ').</span>'; return; }
+    }
+    const l = (cacheAtestados[d.p.uid] || []).filter(a => a.nome_crianca === d.c).sort((x, y) => msTs(y.enviado_em) - msTs(x.enviado_em));
+    const box2 = $('ficha-atestados');
+    if (!box2) return;
+    box2.innerHTML = '<small>🩺 Atestados enviados (ficam guardados mesmo se a falta for removida)</small>' + (l.length ? l.map(a => {
+        const f = faltasAdmin.find(x => x.id === a.id);
+        return `<div class="falta-linha" style="width:100%;"><span>${new Date(msTs(a.enviado_em)).toLocaleDateString('pt-BR')} · ${f ? 'falta de ' + fmtData(f.data) + ' · ' + esc(f.atestado_status || 'em análise') : '<b style="color:#c1121f;">falta removida</b>'}</span><a onclick="window.verAtestadoGuardado('${a.id}')">🩺 Ver</a></div>`;
+    }).join('') : '<span style="color:#888;">Nenhum atestado enviado.</span>');
+}
+window.verAtestadoGuardado = id => {
+    const a = Object.values(cacheAtestados).flat().find(x => x.id === id);
+    if (!a) return;
+    const f = faltasAdmin.find(x => x.id === id);
+    atestadoAtual = f ? id : null;
+    $('at-img').src = a.imagem;
+    $('at-info').textContent = `${a.nome_crianca} · ${f ? 'falta de ' + fmtData(f.data) : 'falta removida'}`;
+    $('at-decisao').style.display = f ? 'flex' : 'none';
+    $('modal-atestado').style.display = 'flex';
+};
 const linhasFaltas = (d, adm) => d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + esc(f.horario) : ''}${f.origem === 'pai' ? ' · pai' : ''}${f.atestado_status ? ' · atestado ' + (f.atestado_status === 'aprovado' ? 'aprovado' : 'recusado') : ''}</span>${adm ? `<span>${(f.atestado || f.tem_atestado) ? `<a onclick="window.verAtestado('${f.id}')">🩺 Ver atestado</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span>` : ''}</div>`; }).join('');
 function cartaoAluno(d, adm) {
     const nAt = d.fs.filter(f => sit(f) === 'analise').length, nTot = d.fs.filter(f => f.atestado || f.tem_atestado).length, img = ultimoAceite(aceitesAdmin, 'imagem', d.p.uid, d.c), nasc = d.p.nascimentos?.[d.c];
@@ -610,7 +638,7 @@ function renderListaAlunos(dados) {
     if (filtroAl === 'atestados') lista.sort((a, b) => b.fs.filter(f => sit(f) === 'analise').length - a.fs.filter(f => sit(f) === 'analise').length);
     el.innerHTML = lista.length ? lista.map(d => cartaoAluno(d, adm)).join('') : '<p class="card" style="text-align:center;">Nenhum aluno encontrado.</p>';
 }
-window.abrirFicha = (uid, nome) => { fichaAtual = { uid, nome, aba: 'resumo' }; $('modal-ficha').style.display = 'flex'; renderFicha(); };
+window.abrirFicha = (uid, nome) => { delete cacheAtestados[uid]; fichaAtual = { uid, nome, aba: 'resumo' }; $('modal-ficha').style.display = 'flex'; renderFicha(); };
 window.fecharFicha = () => { fichaAtual = null; $('modal-ficha').style.display = 'none'; };
 window.fichaAba = a => { fichaAtual.aba = a; renderFicha(); };
 window.toggleFormFalta = () => { const el = $('ficha-form-falta'); el.style.display = el.style.display === 'none' ? 'flex' : 'none'; };
@@ -632,7 +660,8 @@ function renderFicha() {
     } else if (fichaAtual.aba === 'faltas') {
         $('ficha-corpo').innerHTML = `<p class="ficha-frase">${d.fs.length} falta(s) · ${d.reps} reposição(ões) já agendada(s)<br><b>Direito a reposição agora: ${d.saldo}</b></p>
             <div class="faltas-lista">${linhasFaltas(d, adm) || '<small style="color:#888;">Nenhuma falta registrada.</small>'}</div>
-            ${adm ? `<button class="btn-action" onclick="window.toggleFormFalta()">＋ Registrar falta</button><div id="ficha-form-falta" class="acoes-aluno" style="display:none;">${opcoesFalta(d, at)}</div>` : ''}`;
+            ${adm ? `<button class="btn-action" onclick="window.toggleFormFalta()">＋ Registrar falta</button><div id="ficha-form-falta" class="acoes-aluno" style="display:none;">${opcoesFalta(d, at)}</div><div id="ficha-atestados" class="ficha-bloco" style="margin-top:10px;"></div>` : ''}`;
+        if (adm) carregarAtestadosAluno(d);
     } else {
         const priv = aceitesAdmin.some(a => a.id_responsavel === d.p.uid && a.tipo === 'privacidade');
         $('ficha-corpo').innerHTML = `<div class="ficha-bloco"><small>Aviso de privacidade</small><b>${priv ? '✅ aceito' : '⏳ pendente'}</b></div>
@@ -1316,6 +1345,7 @@ window.verAtestado = async id => {
     }
     if (!img) return alert("Atestado não encontrado.");
     atestadoAtual = id;
+    $('at-decisao').style.display = 'flex';
     $('at-img').src = img;
     $('at-info').textContent = `${f.nome_crianca} · falta de ${fmtData(f.data)}${f.atestado_status ? ' · ' + (f.atestado_status === 'aprovado' ? '✅ aprovado' : '❌ recusado') : ''}`;
     $('modal-atestado').style.display = 'flex';
@@ -2496,7 +2526,7 @@ html { overflow-x:hidden; }
         <h2 style="color:var(--primary);">🩺 Atestado</h2>
         <p id="at-info" style="margin:8px 0; color:#555;"></p>
         <img id="at-img" alt="Atestado" style="max-width:100%; border-radius:10px;">
-        <div style="display:flex; gap:10px;">
+        <div id="at-decisao" style="display:flex; gap:10px;">
             <button type="button" class="btn-action" style="background:#c1121f;" onclick="window.decidirAtestado('recusado')">Recusar</button>
             <button type="button" class="btn-action" style="background:#2a9d8f;" onclick="window.decidirAtestado('aprovado')">Aprovar</button>
         </div>
