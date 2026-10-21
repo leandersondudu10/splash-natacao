@@ -578,11 +578,11 @@ function renderAlunos() {
 
 // ----- tela ALUNOS: cartões resumidos + ficha completa ao tocar
 let fichaAtual = null;
-const linhasFaltas = (d, adm) => d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + esc(f.horario) : ''}${f.origem === 'pai' ? ' · pai' : ''}</span>${adm ? `<span>${(f.atestado || f.tem_atestado) ? `<a onclick="window.verAtestado('${f.id}')">🩺 ver</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span>` : ''}</div>`; }).join('');
+const linhasFaltas = (d, adm) => d.fs.slice().reverse().map(f => { const st = sit(f); return `<div class="falta-linha"><span class="pill ${PILL_CLS[st]}">${pillCurto(st)}</span><span>${fmtData(f.data)}${f.horario ? ' · ' + esc(f.horario) : ''}${f.origem === 'pai' ? ' · pai' : ''}${f.atestado_status ? ' · atestado ' + (f.atestado_status === 'aprovado' ? 'aprovado' : 'recusado') : ''}</span>${adm ? `<span>${(f.atestado || f.tem_atestado) ? `<a onclick="window.verAtestado('${f.id}')">🩺 Ver atestado</a>` : ''}<a onclick="window.removerFalta('${f.id}')">✕</a></span>` : ''}</div>`; }).join('');
 function cartaoAluno(d, adm) {
-    const nAt = d.fs.filter(f => sit(f) === 'analise').length, img = ultimoAceite(aceitesAdmin, 'imagem', d.p.uid, d.c), nasc = d.p.nascimentos?.[d.c];
+    const nAt = d.fs.filter(f => sit(f) === 'analise').length, nTot = d.fs.filter(f => f.atestado || f.tem_atestado).length, img = ultimoAceite(aceitesAdmin, 'imagem', d.p.uid, d.c), nasc = d.p.nascimentos?.[d.c];
     const alertas = [
-        adm && nAt ? `<span class="pill an">🩺 ${nAt} atestado(s)</span>` : '',
+        adm && nAt ? `<span class="pill an">🩺 ${nAt} a analisar</span>` : (adm && nTot ? `<span class="pill">🩺 ${nTot} atestado(s)</span>` : ''),
         d.saldo > 0 ? `<span class="pill ok">🔁 ${d.saldo} reposição(ões)</span>` : '',
         img?.decisao === 'nao_autorizo' ? '<span class="pill no">🚫 sem imagem</span>' : '',
         !img ? '<span class="pill">⏳ termo pendente</span>' : ''
@@ -601,12 +601,13 @@ function renderListaAlunos(dados) {
     const aba = document.querySelector('#admin-panel .nav-tab[data-aba="admin-alunos"]');
     if (aba) aba.dataset.badge = adm ? (nAt || '') : '';
     const chipAt = document.querySelector('#admin-alunos .chip[data-f="atestados"]');
-    if (chipAt) chipAt.textContent = nAt ? `🩺 Atestados (${nAt})` : '🩺 Atestados';
+    if (chipAt) chipAt.textContent = nAt ? `🩺 Atestados (${nAt} a analisar)` : '🩺 Atestados';
     document.querySelectorAll('#admin-alunos .chip').forEach(b => b.classList.toggle('on', b.dataset.f === filtroAl));
     $('al-total').textContent = `${dados.length} aluno(s) cadastrado(s)`;
     const q = slug(buscaAl.trim());
-    const lista = dados.filter(d => (filtroAl === 'todos' || (filtroAl === 'atestados' && d.fs.some(f => sit(f) === 'analise')) || (filtroAl === 'repor' && d.saldo > 0) || (filtroAl === 'semturma' && !d.turmas.length) || (filtroAl === 'semimg' && ultimoAceite(aceitesAdmin, 'imagem', d.p.uid, d.c)?.decisao === 'nao_autorizo'))
+    const lista = dados.filter(d => (filtroAl === 'todos' || (filtroAl === 'atestados' && d.fs.some(f => f.atestado || f.tem_atestado)) || (filtroAl === 'repor' && d.saldo > 0) || (filtroAl === 'semturma' && !d.turmas.length) || (filtroAl === 'semimg' && ultimoAceite(aceitesAdmin, 'imagem', d.p.uid, d.c)?.decisao === 'nao_autorizo'))
         && (!q || slug(d.c).includes(q) || slug(d.p.nome_responsavel || '').includes(q)));
+    if (filtroAl === 'atestados') lista.sort((a, b) => b.fs.filter(f => sit(f) === 'analise').length - a.fs.filter(f => sit(f) === 'analise').length);
     el.innerHTML = lista.length ? lista.map(d => cartaoAluno(d, adm)).join('') : '<p class="card" style="text-align:center;">Nenhum aluno encontrado.</p>';
 }
 window.abrirFicha = (uid, nome) => { fichaAtual = { uid, nome, aba: 'resumo' }; $('modal-ficha').style.display = 'flex'; renderFicha(); };
