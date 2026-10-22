@@ -35,7 +35,26 @@ let papel = 'responsavel', meuNome = '', profsAdmin = [], primeiroAcessoProf = f
 const PROFESSORA_VE_ALUNOS = true; // true = a professora vê a aba Alunos (sem atestados, sem financeiro e sem cadastros)
 const RESERVADOS = ['bruna', 'admin'];
 // Dados da escola usados no aviso de privacidade. Preencha o contato (WhatsApp ou e-mail) para pedidos sobre dados.
-const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625' };
+const ESCOLA = { nome: 'SPLASH! Natação', contato: 'WhatsApp +55 (85) 8841-9625', site: '' }; // site: endereço do sistema (se vazio, usa o endereço aberto agora)
+// Mensagem enviada ao responsável quando a conta é criada. Use {nome}, {crianca}, {login}, {senha}, {link} e {escola}.
+const MSG_BOASVINDAS = `Olá, {nome}! 🏊‍♂️
+
+Bem-vindo(a) à {escola}! Criamos o seu acesso ao sistema de aulas, onde você acompanha as aulas de {crianca}, avisa faltas, vê os eventos e muito mais.
+
+🔗 Acesse: {link}
+👤 Usuário: {login}
+🔑 Senha provisória: {senha}
+
+No primeiro acesso você vai:
+1) criar uma senha nova, só sua;
+2) ler e aceitar o aviso de privacidade;
+3) responder ao termo de uso de imagem e voz de {crianca}.
+
+Dica: no celular, use "Adicionar à tela inicial" no menu do navegador para abrir como um aplicativo.
+
+Qualquer dúvida, é só chamar! 💙`;
+const mensagemBoasVindas = v => MSG_BOASVINDAS.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? m);
+const linkDoSistema = () => ESCOLA.site || (location.origin + location.pathname);
 // PIX para a mensalidade. Preencha a chave (obrigatório), o tipo (CPF, CNPJ, Telefone, E-mail ou Aleatória) e, se quiser, o valor.
 const PIX = { chave: '', tipo: 'Telefone', beneficiario: 'SPLASH! Natação', valor: '' };
 // Mensalidade padrão (R$) e dia do vencimento. Cada aluno pode ter valor e vencimento próprios (botão ⚙️ Plano).
@@ -652,7 +671,7 @@ function renderFicha() {
         .map(([id, rot]) => `<button type="button" class="chip${fichaAtual.aba === id ? ' on' : ''}" onclick="window.fichaAba('${id}')">${rot}</button>`).join('');
     const at = `data-uid="${esc(d.p.uid)}" data-nome="${esc(d.c)}"`, wa = String(d.p.telefone || '').replace(/\D/g, '');
     if (fichaAtual.aba === 'resumo') {
-        $('ficha-corpo').innerHTML = `<div class="ficha-bloco"><small>Responsável</small><b>${esc(d.p.nome_responsavel)}</b><span>📞 ${esc(d.p.telefone || 'sem telefone')}</span>${wa ? `<a class="btn-wpp" href="https://wa.me/${wa.length <= 11 ? '55' + wa : wa}" target="_blank" rel="noopener">💬 Chamar no WhatsApp</a>` : ''}</div>
+        $('ficha-corpo').innerHTML = `<div class="ficha-bloco"><small>Responsável</small><b>${esc(d.p.nome_responsavel)}</b><span>📞 ${esc(d.p.telefone || 'sem telefone')}</span>${wa ? `<a class="btn-wpp" href="https://wa.me/${wa.length <= 11 ? '55' + wa : wa}" target="_blank" rel="noopener">💬 Chamar no WhatsApp</a><a class="btn-wpp" style="margin-top:6px;" href="https://wa.me/${wa.length <= 11 ? '55' + wa : wa}?text=${encodeURIComponent('Olá, ' + d.p.nome_responsavel + '! Segue o acesso ao sistema da ' + ESCOLA.nome + ':\n🔗 ' + linkDoSistema() + '\n👤 Usuário: ' + (d.p.email || d.p.usuario || '') + '\nSe esqueceu a senha, fale com a escola.')}" target="_blank" rel="noopener">🔗 Reenviar link e usuário</a>` : ''}</div>
             <div class="ficha-bloco"><small>Turmas fixas</small>${d.turmas.length ? d.turmas.map(i => `<span>📌 ${nomeDias(i.x.dias)} · ${i.g.horario} · ${esc(i.g.nome || TIPOS[i.g.tipo])}${i.g.professora ? ' · ' + esc(i.g.professora) : ''}</span>`).join('') : '<span style="color:#888;">Ainda não está em nenhuma turma.</span>'}</div>
             <div class="ficha-bloco"><small>Imagem e voz</small><b>${rotuloImagemAdm(d.p.uid, d.c)}</b></div>
             <div class="ficha-bloco"><small>Nascimento</small><b>${nasc ? fmtData(nasc) + ' (' + idadeDe(nasc) + ' anos)' : 'não cadastrado'}</b></div>
@@ -1176,7 +1195,12 @@ window.abrirCadastro = () => {
     ['cd-nome', 'cd-tel', 'cd-email', 'cd-user', 'cd-crianca', 'cd-nasc'].forEach(id => { $(id).value = ''; });
     $('cd-user').dataset.manual = '';
     $('cd-senha').value = senhaInicial();
-    $('cd-resultado').innerHTML = '';
+    $('cd-resultado').innerHTML = `<div class="card" style="background:#e8f8f1; margin-top:12px;"><p style="color:#2a9d8f; font-weight:bold;">✅ Cadastro criado!</p>
+        <p>👤 <b>${esc(login)}</b> · 🔑 <b>${esc(senha)}</b></p>
+        <small>Mensagem pronta para ${n ? esc(tel) : 'enviar (sem telefone informado)'}. Você pode editar o texto antes de enviar:</small>
+        <textarea id="cd-msg" rows="10" style="width:100%; padding:10px; border:2px solid #cfe9f3; border-radius:10px; font-size:14px; font-family:inherit; margin-top:6px;">${esc(msg)}</textarea>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">${n ? `<button type="button" class="btn-wpp" style="border:none; flex:1 1 auto; cursor:pointer; margin:0;" data-tel="${n}" onclick="window.enviarBoasVindas(this)">💬 Abrir no WhatsApp</button>` : ''}<button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.copiarBoasVindas()">📋 Copiar mensagem</button></div>
+        <small style="display:block; margin-top:8px;">A senha é provisória: no primeiro acesso a pessoa cria uma nova. Ela não fica guardada no sistema, então envie agora.</small>${sug}</div>`;
     $('modal-cadastro').style.display = 'flex';
 };
 window.fecharCadastro = () => { $('modal-cadastro').style.display = 'none'; };
@@ -1204,13 +1228,20 @@ window.salvarCadastro = async function() {
         return alert("O acesso foi criado, mas o perfil não foi salvo (" + (e.code || e.message) + "). Confira as regras do Firebase e use outro usuário para tentar de novo.");
     }
     const login = email || usuario, n = tel.replace(/\D/g, '');
-    const msg = `Olá, ${nome}! Seu acesso ao sistema da ${ESCOLA.nome}:\n🔗 ${location.href.split('#')[0]}\n👤 Usuário: ${login}\n🔑 Senha: ${senha}\nVocê pode trocar a senha na aba Perfil. 🏊‍♂️`;
+    const msg = mensagemBoasVindas({ nome, crianca, login, senha, escola: ESCOLA.nome, link: linkDoSistema() });
     const idade = idadeDe(nasc);
     const sug = idade == null ? '<p style="font-size:13px; color:#888;">Sem data de nascimento, não há sugestão de turma.</p>' : (() => {
         const l = gradeAdmin.filter(g => g.tipo !== 'individual' && compativel(g, idade) && g.dias.every(d => ocupDia(g, d) < g.capacidade));
         return l.length ? `<p style="font-size:13px; margin:8px 0 4px;"><b>Turmas compatíveis com ${idade} anos e com vaga:</b></p>` + l.map(g => `<button type="button" class="chip" style="margin:3px 4px 3px 0;" data-uid="${esc(cred.user.uid)}" data-nome="${esc(crianca)}" onclick="window.incluirRapido('${g.id}', this)">${nomeDias(g.dias)} ${g.horario} · ${esc(g.nome || TIPOS[g.tipo])}</button>`).join('') : '<p style="font-size:13px; color:#888;">Nenhuma turma de grupo com vaga para essa idade.</p>';
     })();
     $('cd-resultado').innerHTML = `<div class="card" style="background:#e8f8f1; margin-top:12px;"><p style="color:#2a9d8f; font-weight:bold;">✅ Cadastro criado!</p><p>👤 <b>${esc(login)}</b></p><p>🔑 <b>${esc(senha)}</b></p><small>Anote ou envie agora: a senha não fica guardada no sistema.</small>${n ? `<a class="btn-wpp" href="https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">💬 Enviar acesso pelo WhatsApp</a>` : ''}${sug}</div>`;
+};
+window.enviarBoasVindas = btn => {
+    const n = btn.dataset.tel.replace(/^0+/, '');
+    window.open(`https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent($('cd-msg').value)}`, '_blank');
+};
+window.copiarBoasVindas = () => {
+    navigator.clipboard.writeText($('cd-msg').value).then(() => toast('📋 Mensagem copiada!')).catch(() => prompt('Copie a mensagem:', $('cd-msg').value));
 };
 window.esqueciSenha = async () => {
     const e = $('login-user').value.trim().toLowerCase();
