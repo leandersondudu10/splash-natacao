@@ -1229,7 +1229,12 @@ window.salvarCadastro = async function() {
         const l = gradeAdmin.filter(g => g.tipo !== 'individual' && compativel(g, idade) && g.dias.every(d => ocupDia(g, d) < g.capacidade));
         return l.length ? `<p style="font-size:13px; margin:8px 0 4px;"><b>Turmas compatíveis com ${idade} anos e com vaga:</b></p>` + l.map(g => `<button type="button" class="chip" style="margin:3px 4px 3px 0;" data-uid="${esc(cred.user.uid)}" data-nome="${esc(crianca)}" onclick="window.incluirRapido('${g.id}', this)">${nomeDias(g.dias)} ${g.horario} · ${esc(g.nome || TIPOS[g.tipo])}</button>`).join('') : '<p style="font-size:13px; color:#888;">Nenhuma turma de grupo com vaga para essa idade.</p>';
     })();
-    $('cd-resultado').innerHTML = `<div class="card" style="background:#e8f8f1; margin-top:12px;"><p style="color:#2a9d8f; font-weight:bold;">✅ Cadastro criado!</p><p>👤 <b>${esc(login)}</b></p><p>🔑 <b>${esc(senha)}</b></p><small>Anote ou envie agora: a senha não fica guardada no sistema.</small>${n ? `<a class="btn-wpp" href="https://wa.me/${n.length <= 11 ? '55' + n : n}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">💬 Enviar acesso pelo WhatsApp</a>` : ''}${sug}</div>`;
+    $('cd-resultado').innerHTML = `<div class="card" style="background:#e8f8f1; margin-top:12px;"><p style="color:#2a9d8f; font-weight:bold;">✅ Cadastro criado!</p>
+        <p>👤 <b>${esc(login)}</b> · 🔑 <b>${esc(senha)}</b></p>
+        <small>Mensagem pronta para ${n ? esc(tel) : 'enviar (sem telefone informado)'}. Você pode editar o texto antes de enviar:</small>
+        <textarea id="cd-msg" rows="10" style="width:100%; padding:10px; border:2px solid #cfe9f3; border-radius:10px; font-size:14px; font-family:inherit; margin-top:6px;">${esc(msg)}</textarea>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">${n ? `<button type="button" class="btn-wpp" style="border:none; flex:1 1 auto; cursor:pointer; margin:0;" data-tel="${n}" onclick="window.enviarBoasVindas(this)">💬 Abrir no WhatsApp</button>` : ''}<button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.copiarBoasVindas()">📋 Copiar mensagem</button></div>
+        <small style="display:block; margin-top:8px;">A senha é provisória: no primeiro acesso a pessoa cria uma nova. Ela não fica guardada no sistema, então envie agora.</small>${sug}</div>`;
 };
 window.enviarBoasVindas = btn => {
     const n = btn.dataset.tel.replace(/^0+/, '');
