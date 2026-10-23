@@ -2190,4 +2190,412 @@ html { overflow-x:hidden; }
 <div class="onda onda2" aria-hidden="true"></div>
 
 <div class="header">
-    <img id="logo-img" src="logo.png" alt="Logo da escola" style="display:block; margin:0 auto; max-height:90px; max-width:80%; background:#fff; border-radius:15px; padding:8px 16px; box-shadow:0 4px 8px rgba(0,0,0,.1);" onerror="this.style.display='none'; document.getElementById('logo-texto').style.display='
+    <img id="logo-img" src="logo.png" alt="Logo da escola" style="display:block; margin:0 auto; max-height:90px; max-width:80%; background:#fff; border-radius:15px; padding:8px 16px; box-shadow:0 4px 8px rgba(0,0,0,.1);" onerror="this.style.display='none'; document.getElementById('logo-texto').style.display='inline-block';">
+    <div id="logo-texto" style="display:none; background:#fff; padding:8px 20px; border-radius:15px; box-shadow:0 4px 8px rgba(0,0,0,.1);">
+        <span style="font-weight:900; font-size:26px; color:#023e8a; display:block; line-height:1;">SPLASH!</span>
+        <span style="font-weight:bold; font-size:13px; color:#fff; background:#00b4d8; padding:2px 10px; border-radius:10px; display:inline-block; margin-top:4px;">NATAÇÃO</span>
+    </div>
+    <div style="margin-top:15px;">
+        <span id="user-name-display" style="font-size:14px; background:rgba(255,255,255,.2); padding:5px 15px; border-radius:20px; display:inline-block;">Carregando...</span>
+    </div>
+</div>
+
+<div class="container">
+
+    <div id="login-screen" style="display:none;">
+        <div id="login-box" class="card">
+            <h2>Acesso ao Sistema</h2>
+            <form id="form-login">
+                <div class="form-group"><label>Usuário ou e-mail</label><input type="text" id="login-user" required placeholder="usuário ou e-mail" autocomplete="username" autocapitalize="none" maxlength="80"></div>
+                <div class="form-group"><label>Senha</label><input type="password" id="login-pass" required autocomplete="current-password"></div>
+                <button type="submit" class="btn-action">Entrar 🏊‍♂️</button>
+                <p style="text-align:center; font-size:13px; color:#666; margin-top:12px;">Ainda não tem acesso? Fale com a escola para fazer o seu cadastro.</p>
+                <a class="toggle-link" style="font-weight:normal; font-size:13px;" onclick="window.esqueciSenha()">Esqueci minha senha</a>
+                <a class="toggle-link" style="font-weight:normal; font-size:13px;" onclick="window.abrirPrivacidade()">Aviso de privacidade</a>
+            </form>
+        </div>
+        
+    </div>
+
+    <div id="app-screen" style="display:none;">
+        <div><button id="btn-logout" class="btn-logout">Sair</button><div style="clear:both;"></div></div>
+
+        <div id="admin-panel" style="display:none;">
+            <div class="nav-tabs">
+                <div class="nav-tab active" data-aba="admin-turmas" onclick="window.mudarAbaAdmin('admin-turmas')"><span class="ico">📅</span><span class="rot">Turmas</span></div>
+                
+                <div class="nav-tab" data-aba="admin-calendario" data-abas="admin-calendario,admin-historico,admin-eventos" onclick="window.mudarAbaAdmin('admin-calendario')"><span class="ico">🗓️</span><span class="rot">Agenda</span></div>
+                <div class="nav-tab" data-aba="admin-atividade" onclick="window.mudarAbaAdmin('admin-atividade')"><span class="ico">🔔</span><span class="rot">Atividade</span></div>
+                <div class="nav-tab so-alunos" data-aba="admin-alunos" onclick="window.mudarAbaAdmin('admin-alunos')"><span class="ico">👥</span><span class="rot">Alunos</span></div>
+                <div class="nav-tab so-dona" data-aba="admin-financeiro" onclick="window.mudarAbaAdmin('admin-financeiro')"><span class="ico">💰</span><span class="rot">Finanças</span></div>
+            </div>
+            <div id="admin-nova" class="admin-section card" style="display:none;">
+                <h2 id="titulo-form-turma">Liberar Nova Turma</h2>
+                <form id="form-nova-turma">
+                    <div class="form-group"><label>Data da Aula</label><input type="date" id="turma-data" required></div>
+                    <div class="form-group"><label>Horário</label><input type="time" id="turma-horario" required></div>
+                        <div class="form-group"><label>Professora(s)</label><div id="tp-box"></div></div>
+                    <div class="form-group">
+                        <label>Nível da Turma</label>
+                        <select id="turma-nivel" required>
+                            <option value="Baby Splash">Baby Splash</option>
+                            <option value="Infantil">Infantil</option>
+                            <option value="Avançado">Avançado</option>
+                        </select>
+                    </div>
+                    <div class="form-group"><label>Total de Vagas</label><input type="number" id="turma-vagas" min="1" value="6" required></div>
+                    <button type="submit" id="btn-salvar-turma" class="btn-action">Salvar Turma</button>
+                    <button type="button" id="btn-cancelar-edicao" class="btn-action" style="display:none; background:#888;" onclick="window.cancelarEdicao()">Cancelar edição</button>
+                </form>
+            </div>
+            <div id="admin-calendario" class="admin-section card" style="display:none;">
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-eventos')">🎉 Eventos</button></div>
+                <div class="cal-head">
+                    <button type="button" onclick="window.mudarMes(-1)">‹</button>
+                    <h2 id="cal-titulo" style="margin:0;"></h2>
+                    <button type="button" onclick="window.mudarMes(1)">›</button>
+                </div>
+                <div id="cal-corpo"></div>
+                <p style="font-size:12px; color:#555; margin-top:10px;"><span id="cal-leg"></span> &nbsp; <span style="color:#2a9d8f; font-weight:bold;">✓ 3</span> já aconteceu (nº de alunos)</p>
+                <div id="cal-dia-detalhe"></div>
+            </div>
+            <div id="admin-alunos" class="admin-section" style="display:none;">
+                <div class="card">
+                    <h2 style="font-size:18px; margin-bottom:4px;">👥 Alunos</h2>
+                    <p id="al-total" style="text-align:center; font-size:13px; color:#666; margin-bottom:8px;"></p>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                        <button type="button" class="mini-btn so-dona" style="background:var(--orange);" onclick="window.abrirCadastro()">➕ Novo cadastro</button>
+                        <button type="button" class="mini-btn so-dona" style="background:#e08600;" onclick="window.abrirAluno()">➕ Novo aluno</button>
+                        <button type="button" class="mini-btn so-dona" style="background:#8338ec;" onclick="window.abrirProf()">👩‍🏫 Professoras</button>
+                    </div>
+                    <input type="search" placeholder="🔍 Buscar aluno ou responsável" oninput="window.buscarAluno(this.value)" style="width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px; margin-bottom:8px;">
+                    <div class="chips">
+                        <button type="button" class="chip on" data-f="todos" onclick="window.filtrarAlunos('todos')">Todos</button>
+                        <button type="button" class="chip so-dona" data-f="atestados" onclick="window.filtrarAlunos('atestados')">🩺 Atestados</button>
+                        <button type="button" class="chip" data-f="repor" onclick="window.filtrarAlunos('repor')">🔁 A repor</button>
+                        <button type="button" class="chip" data-f="semimg" onclick="window.filtrarAlunos('semimg')">🚫 Sem imagem</button>
+                        <button type="button" class="chip" data-f="semturma" onclick="window.filtrarAlunos('semturma')">📌 Sem turma</button>
+                    </div>
+                </div>
+                <div id="lista-alunos-admin">Carregando...</div>
+            </div>
+            <div id="admin-financeiro" class="admin-section" style="display:none;">
+                <div class="card">
+                    <div class="cal-head">
+                        <button type="button" onclick="window.mudarMesAl(-1)">‹</button>
+                        <h2 id="al-mes" style="margin:0; font-size:18px;"></h2>
+                        <button type="button" onclick="window.mudarMesAl(1)">›</button>
+                    </div>
+                    <p id="al-resumo" style="text-align:center; font-size:14px; margin-bottom:10px;"></p>
+                    <div id="fin-resumo"></div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                        <button type="button" class="mini-btn" style="background:#2a9d8f;" onclick="window.exportarCsv()">⬇️ Planilha do mês (CSV)</button>
+                        <button type="button" class="mini-btn" style="background:#6c757d;" onclick="window.exportarBackup()">💾 Backup completo</button>
+                    </div>
+                    <div class="chips">
+                        <button type="button" class="chip on" data-f="todos" onclick="window.filtrarFin('todos')">Todos</button>
+                        <button type="button" class="chip" data-f="pendentes" onclick="window.filtrarFin('pendentes')">⏳ Pendentes</button>
+                        <button type="button" class="chip" data-f="pagos" onclick="window.filtrarFin('pagos')">✅ Pagos</button>
+                        <button type="button" class="chip" data-f="atrasados" onclick="window.filtrarFin('atrasados')">⚠️ Atrasados</button>
+                        <button type="button" class="chip" data-f="confirmar" onclick="window.filtrarFin('confirmar')">🟡 A confirmar</button>
+                    </div>
+                </div>
+                <div id="lista-fin">Carregando...</div>
+            </div>
+            <div id="admin-eventos" class="admin-section" style="display:none;">
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-eventos')">🎉 Eventos</button></div>
+                <button type="button" class="btn-action so-dona" style="margin:0 0 12px;" onclick="window.abrirEvento()">➕ Novo evento</button>
+                <div id="lista-eventos-admin">Carregando...</div>
+            </div>
+            <div id="admin-historico" class="admin-section" style="display:none;">
+                <div class="chips" style="margin-bottom:12px;"><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-calendario')">🗓️ Calendário</button><button type="button" class="chip on" onclick="window.mudarAbaAdmin('admin-historico')">📜 Histórico</button><button type="button" class="chip" onclick="window.mudarAbaAdmin('admin-eventos')">🎉 Eventos</button></div>
+                <div class="card">
+                    <div class="cal-head">
+                        <button type="button" onclick="window.mudarMesHist(-1)">‹</button>
+                        <h2 id="hist-mes" style="margin:0; font-size:18px;"></h2>
+                        <button type="button" onclick="window.mudarMesHist(1)">›</button>
+                    </div>
+                    <input type="search" placeholder="🔍 Buscar aluno ou responsável" oninput="window.buscarHistorico(this.value)" style="width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px; margin:8px 0;">
+                    <p id="hist-resumo" style="text-align:center; font-size:14px;"></p>
+                </div>
+                <div id="lista-historico">Carregando...</div>
+            </div>
+            <div id="admin-atividade" class="admin-section" style="display:none;">
+                <div id="lista-atividade">Carregando...</div>
+            </div>
+            <div id="admin-turmas" class="admin-section">
+                <div class="chips" style="margin-bottom:12px;">
+                    <button type="button" class="chip on" data-v="fixas" onclick="window.visaoTurmas('fixas')">📌 Aulas fixas</button>
+                    <button type="button" class="chip" data-v="reposicoes" onclick="window.visaoTurmas('reposicoes')">🔁 Reposições</button>
+                </div>
+                <div id="lista-grade"></div>
+                <div id="resumo-hoje" style="display:none;"></div>
+                <div id="lista-admin-turmas" style="display:none;">Carregando turmas...</div>
+            </div>
+        </div>
+
+        <div id="parent-panel" style="display:none;">
+            <div class="nav-tabs">
+                <div class="nav-tab active" data-aba="pai-aulas" onclick="window.mudarAbaPai('pai-aulas')"><span class="ico">🏊‍♂️</span><span class="rot">Aulas</span></div>
+                <div class="nav-tab" data-aba="pai-agendamentos" onclick="window.mudarAbaPai('pai-agendamentos')"><span class="ico">📅</span><span class="rot">Agendados</span></div>
+                <div class="nav-tab" data-aba="pai-pagamento" onclick="window.mudarAbaPai('pai-pagamento')"><span class="ico">💳</span><span class="rot">Pagamento</span></div>
+                <div class="nav-tab" data-aba="pai-eventos" onclick="window.mudarAbaPai('pai-eventos')"><span class="ico">🎉</span><span class="rot">Eventos</span></div>
+                <div class="nav-tab" data-aba="pai-perfil" onclick="window.mudarAbaPai('pai-perfil')"><span class="ico">⚙️</span><span class="rot">Perfil</span></div>
+            </div>
+            <div id="pai-aulas" class="parent-section"><div id="lista-aulas-disponiveis">Buscando aulas...</div></div>
+            <div id="pai-agendamentos" class="parent-section" style="display:none;"><div id="minhas-fixas"></div>
+                <div id="lista-meus-agendamentos">Buscando...</div></div>
+            <div id="pai-pagamento" class="parent-section" style="display:none;">
+                <div class="card"><h2>💳 Mensalidade</h2><div id="pix-box"></div></div>
+                <div class="card">
+                    <div class="cal-head">
+                        <button type="button" onclick="window.mudarMesPai(-1)">‹</button>
+                        <h2 id="pg-mes" style="margin:0; font-size:18px;"></h2>
+                        <button type="button" onclick="window.mudarMesPai(1)">›</button>
+                    </div>
+                    <div id="lista-pagamento"></div>
+                </div>
+            </div>
+            <div id="pai-eventos" class="parent-section" style="display:none;"><div id="lista-eventos-pai">Carregando...</div></div>
+            <div id="pai-perfil" class="parent-section card" style="display:none;">
+                <h2>Meu Perfil Familiar</h2>
+                <div class="form-group" style="margin-top:20px;">
+                    <label>Telefone de Contato</label>
+                    <div style="display:flex; gap:10px;">
+                        <input type="tel" id="perfil-telefone">
+                        <button type="button" onclick="window.salvarTelefone()" style="background:var(--primary); color:#fff; border:none; padding:0 15px; border-radius:10px; cursor:pointer;">Salvar</button>
+                    </div>
+                </div>
+                <hr style="margin:25px 0; border:0; border-top:1px solid #eee;">
+                <h3 style="color:var(--dark); font-size:18px; margin-bottom:15px;">Meus Peixinhos (Alunos)</h3>
+                <div id="lista-filhos"></div>
+                <p style="font-size:13px; color:#666; margin-top:15px;">Para incluir ou alterar alunos, fale com a escola.</p>
+                    <hr style="margin:20px 0; border:0; border-top:1px solid #eee;">
+                    <h3 style="color:var(--dark); font-size:18px; margin-bottom:10px;">🔒 Trocar senha</h3>
+                    <div style="display:flex; gap:10px;">
+                        <input type="password" id="nova-senha" placeholder="Nova senha (mín. 6)" autocomplete="new-password" style="flex:1; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px;">
+                        <button type="button" onclick="window.trocarSenha()" style="background:var(--primary); color:#fff; border:none; padding:0 15px; border-radius:10px; cursor:pointer;">Salvar</button>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="modal-ficha" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <div class="ficha-topo"><h2 id="ficha-tit" style="margin:0; font-size:20px; text-align:left;"></h2><button type="button" class="chip" onclick="window.fecharFicha()">✕ Fechar</button></div>
+        <div id="ficha-abas" class="chips" style="margin:10px 0;"></div>
+        <div id="ficha-corpo"></div>
+    </div>
+</div>
+
+<div id="modal-agendamento" class="modal-overlay">
+    <div class="modal-box">
+        <h2 style="color:var(--primary);">Confirmar Vaga</h2>
+        <p id="modal-texto" style="margin-bottom:20px; color:#555;"></p>
+        <div class="form-group" style="text-align:left;">
+            <label>Para qual peixinho é a vaga?</label>
+            <select id="select-filho" style="margin-top:5px;"></select>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:25px;">
+            <button type="button" onclick="window.fecharModal()" style="flex:1; padding:12px; border-radius:10px; border:1px solid #ccc; background:#fff; cursor:pointer; font-weight:bold;">Cancelar</button>
+            <button type="button" onclick="window.confirmarAgendamento()" style="flex:1; padding:12px; border-radius:10px; border:none; background:var(--orange); color:#fff; cursor:pointer; font-weight:bold;">Confirmar!</button>
+        </div>
+    </div>
+</div>
+
+<button id="fab" type="button" onclick="window.fabAcao()" aria-label="Liberar nova turma"><span class="fab-ico">➕</span><span class="fab-rot" id="fab-rot">Nova reposição</span></button>
+<div id="offline">📡 Sem internet. Suas ações serão enviadas quando a conexão voltar.</div>
+<div id="toast"></div>
+
+<div id="modal-prof" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <h2 style="color:var(--primary);">👩‍🏫 Professoras</h2>
+        <div id="lista-profs" style="margin-bottom:12px;"></div>
+        <p style="font-size:13px; color:#666; margin-bottom:8px;">Cadastrar nova professora (ela não vê a parte financeira):</p>
+        <div class="form-group"><label>Nome (como aparece nas turmas)</label><input type="text" id="pf-nome" maxlength="40" placeholder="ex: Tia Auri" oninput="window.sugerirUserProf()"></div>
+        <div class="form-group"><label>E-mail (opcional)</label><input type="email" id="pf-email" maxlength="80" autocapitalize="none"></div>
+        <div class="form-group"><label>Usuário (usado se não houver e-mail)</label><input type="text" id="pf-user" maxlength="30" autocapitalize="none" oninput="this.dataset.manual='1'"></div>
+        <div class="form-group"><label>Senha inicial</label><input type="text" id="pf-senha" maxlength="30" autocapitalize="none"></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharProf()">Fechar</button>
+            <button type="button" class="btn-action" onclick="window.salvarProf()">Cadastrar</button>
+        </div>
+        <div id="pf-resultado"></div>
+    </div>
+</div>
+
+<div id="modal-cadastro" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <h2 style="color:var(--primary);">➕ Novo cadastro</h2>
+        <p style="font-size:13px; color:#666; margin-bottom:10px;">Cria o acesso do responsável e já cadastra o aluno.</p>
+        <div class="form-group"><label>Nome do responsável</label><input type="text" id="cd-nome" maxlength="80" oninput="window.sugerirUsuario()"></div>
+        <div class="form-group"><label>Telefone / WhatsApp</label><input type="tel" id="cd-tel" maxlength="20" inputmode="tel"></div>
+        <div class="form-group"><label>E-mail (opcional — permite recuperar a senha)</label><input type="email" id="cd-email" maxlength="80" autocapitalize="none"></div>
+        <div class="form-group"><label>Usuário (usado se não houver e-mail)</label><input type="text" id="cd-user" maxlength="30" autocapitalize="none" oninput="this.dataset.manual='1'"></div>
+        <div class="form-group"><label>Senha inicial</label><input type="text" id="cd-senha" maxlength="30" autocapitalize="none"></div>
+        <div class="form-group"><label>Nome da criança</label><input type="text" id="cd-crianca" maxlength="60"></div>
+        <div class="form-group"><label>Data de nascimento</label><input type="date" id="cd-nasc"></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharCadastro()">Fechar</button>
+            <button type="button" class="btn-action" onclick="window.salvarCadastro()">Cadastrar</button>
+        </div>
+        <div id="cd-resultado"></div>
+    </div>
+</div>
+
+<div id="modal-mat" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">➕ Incluir aluno</h2>
+        <p id="mt-turma" style="margin-bottom:12px; color:#555;"></p>
+        <div class="form-group"><label>Aluno</label><select id="mt-aluno"></select></div>
+        <div class="form-group"><label>Dias</label><div id="mt-dias"></div></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharMatricula()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.confirmarMatricula()">Incluir</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-aluno" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:90vh; overflow-y:auto;">
+        <h2 id="al-titulo" style="color:var(--primary);">➕ Novo aluno</h2>
+        <div class="form-group"><label>Responsável</label><select id="ac-resp"></select></div>
+        <div class="form-group"><label>Nome da criança</label><input type="text" id="ac-nome" maxlength="60"></div>
+        <div class="form-group"><label>Data de nascimento</label><input type="date" id="ac-nasc"></div>
+        <div id="ac-sug"></div>
+        <div style="display:flex; gap:10px; margin-top:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharAluno()">Fechar</button>
+            <button type="button" class="btn-action" onclick="window.salvarAluno()">Salvar</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-pgto" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">✅ Confirmar pagamento</h2>
+        <p id="pgto-quem" style="margin-bottom:12px; color:#555; text-align:center;"></p>
+        <div class="form-group"><label>Valor recebido (R$)</label><input type="text" id="pg-valor" inputmode="decimal" placeholder="ex: 180,00"></div>
+        <div class="form-group"><label>Data do pagamento</label><input type="date" id="pg-data"></div>
+        <div class="form-group"><label>Forma de pagamento</label><select id="pg-forma"><option>PIX</option><option>Dinheiro</option><option>Cartão</option><option>Outro</option></select></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharModalPgto()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.confirmarPgto()">Confirmar</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-plano" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">⚙️ Plano do aluno</h2>
+        <p id="pl-quem" style="margin-bottom:12px; color:#555; text-align:center;"></p>
+        <div class="form-group"><label>Valor da mensalidade (R$)</label><input type="text" id="pl-valor" inputmode="decimal" placeholder="ex: 180,00"></div>
+        <div class="form-group"><label>Dia do vencimento (1 a 28)</label><input type="number" id="pl-venc" min="1" max="28"></div>
+        <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-bottom:10px;"><input type="checkbox" id="pl-todos" style="width:auto; margin-top:3px;"><span>Aplicar este valor e vencimento a <b>todos</b> os alunos</span></label>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharPlano()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.salvarPlano()">Salvar</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-falta" class="modal-overlay">
+    <div class="modal-box" style="text-align:left;">
+        <h2 style="color:var(--primary);">📅 Avisar falta</h2>
+        <p id="mf-quem" style="margin:6px 0; font-weight:bold;"></p>
+        <div id="mf-regra" class="aviso-regra"></div>
+        <div class="form-group" style="margin-top:12px;"><label>🩺 Atestado (foto ou print) — opcional agora</label><input type="file" id="mf-arq" accept="image/*"></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharFalta()">Cancelar</button>
+            <button type="button" class="btn-action" style="background:#ef233c;" onclick="window.confirmarFalta()">Avisar falta</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-wiz" class="modal-overlay" style="z-index:3000;">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <p id="wiz-passo" style="font-size:12px; color:#888; margin-bottom:6px;"></p>
+        <div id="wiz-corpo"></div>
+        <p id="wiz-erro" class="erro" style="text-align:left; margin-top:8px;"></p>
+        <button type="button" id="wiz-sair" class="chip" style="margin-top:10px;" onclick="window.wizSair()">Sair</button>
+    </div>
+</div>
+
+<div id="modal-termos" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <h2 style="color:var(--primary); font-size:20px;">🧾 Comprovante de termos</h2>
+        <div id="termos-corpo"></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="document.getElementById('modal-termos').style.display='none'">Fechar</button>
+            <button type="button" class="btn-action" onclick="window.imprimirTermos()">🖨️ Imprimir</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-evento" class="modal-overlay">
+    <div class="modal-box" style="text-align:left; max-height:92vh; overflow-y:auto;">
+        <h2 id="ev-titulo-modal" style="color:var(--primary);">🎉 Novo evento</h2>
+        <div class="form-group"><label>Título</label><input type="text" id="ev-titulo" maxlength="80"></div>
+        <div class="form-group"><label>Data</label><input type="date" id="ev-data"></div>
+        <div class="form-group"><label>Horário (opcional)</label><input type="time" id="ev-hora"></div>
+        <div class="form-group"><label>Local (opcional)</label><input type="text" id="ev-local" maxlength="80"></div>
+        <div class="form-group"><label>Descrição (opcional)</label><textarea id="ev-desc" rows="4" maxlength="600" style="width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:16px; font-family:inherit;"></textarea></div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#888;" onclick="window.fecharEvento()">Cancelar</button>
+            <button type="button" class="btn-action" onclick="window.salvarEvento()">Salvar</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-atestado" class="modal-overlay">
+    <div class="modal-box" style="max-height:90vh; overflow:auto;">
+        <h2 style="color:var(--primary);">🩺 Atestado</h2>
+        <p id="at-info" style="margin:8px 0; color:#555;"></p>
+        <img id="at-img" alt="Atestado" style="max-width:100%; border-radius:10px;">
+        <div id="at-decisao" style="display:flex; gap:10px;">
+            <button type="button" class="btn-action" style="background:#c1121f;" onclick="window.decidirAtestado('recusado')">Recusar</button>
+            <button type="button" class="btn-action" style="background:#2a9d8f;" onclick="window.decidirAtestado('aprovado')">Aprovar</button>
+        </div>
+        <button type="button" class="btn-action" style="background:#888;" onclick="document.getElementById('modal-atestado').style.display='none'">Fechar</button>
+    </div>
+</div>
+
+<div id="modal-comp" class="modal-overlay">
+    <div class="modal-box" style="max-height:90vh; overflow:auto;">
+        <img id="comp-img" alt="Comprovante" style="max-width:100%; border-radius:10px;">
+        <button class="btn-action" onclick="document.getElementById('modal-comp').style.display='none'">Fechar</button>
+    </div>
+</div>
+
+<div id="modal-privacidade" class="modal-overlay">
+    <div class="modal-box" style="max-height:85vh; overflow-y:auto; text-align:left; font-size:14px; color:#444; line-height:1.5;">
+        <div id="priv-texto"></div>
+        <div id="priv-botoes-leitura"><button class="btn-action" onclick="window.fecharPrivacidade()">Fechar</button></div>
+        <div id="priv-botoes-aceite" style="display:none; gap:10px;">
+            <button class="btn-action" style="background:#888;" onclick="window.fecharPrivacidade(); document.getElementById('btn-logout').click()">Sair</button>
+            <button class="btn-action" onclick="window.aceitarPrivacidade()">Li e aceito</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-whats" class="modal-overlay">
+    <div class="modal-box">
+        <h2 id="modal-whats-txt" style="color:var(--primary);"></h2>
+        <p style="margin:10px 0 18px; color:#555;">Quer avisar no WhatsApp? Você escolhe o grupo ou o contato ao tocar no botão.</p>
+        <div id="whats-link"></div>
+        <button class="btn-action" style="background:#888;" onclick="document.getElementById('modal-whats').style.display='none'">Fechar</button>
+    </div>
+</div>
+
+<div id="modal-aviso" class="modal-overlay">
+    <div class="modal-box" style="max-height:85vh; overflow-y:auto;">
+        <h2 style="color:var(--primary);">📲 Avisar os pais</h2>
+        <p style="font-size:13px; color:#555; margin-bottom:12px;">Toque em "Enviar" ao lado de cada responsável. O WhatsApp abre com a mensagem pronta.</p>
+        <div id="aviso-lista" style="text-align:left;"></div>
+        <button class="btn-action" style="background:#00b4d8;" onclick="window.copiarAviso()">📋 Copiar mensagem (para o grupo)</button>
+        <button class="btn-action" style="background:#888;" onclick="window.fecharAviso()">Fechar</button>
+    </div>
+</div>
+
+</body>
+</html>
